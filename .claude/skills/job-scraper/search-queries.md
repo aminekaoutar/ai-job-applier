@@ -1,7 +1,22 @@
 # Search Queries for Job Scraper
 
-<!-- Market: France. Focus: AI / GenAI / LLM / agentic-AI engineering and development.
-     Adjust the Location Filter below to your own base once /setup has filled CLAUDE.md. -->
+<!-- Market: France, focused on Paris / Île-de-France. Focus: AI / GenAI / LLM /
+     agentic-AI engineering and development. -->
+
+## Paris focus - the four core sites
+
+Every `/scrape` run covers these four sites for **Paris / Île-de-France**, in this order, before anything else. Only widen to the rest of France when the user asks (e.g. "/scrape France" or "/scrape Lyon").
+
+| Site | How `/scrape` reaches it | Paris scoping |
+|------|--------------------------|---------------|
+| **LinkedIn** | `linkedin-search` CLI | `-l "Paris, Île-de-France, France"` |
+| **Welcome to the Jungle** | WebSearch `site:welcometothejungle.com` - robots.txt disallows its search URLs, so no CLI; individual job pages (`/fr/companies/<co>/jobs/<slug>`) may be fetched for details | `Paris` in every query; job slugs end in `_paris` |
+| **Indeed** | WebSearch `site:fr.indeed.com` - Indeed blocks automated fetches (HTTP 403), so keep the search-result link and title, never fetch the page | `Paris` in every query |
+| **HelloWork** | WebSearch `site:hellowork.com` - robots.txt disallows its search pages; individual postings (`/fr-fr/emplois/<id>.html`) may be fetched for details | `Paris` in every query |
+
+Plus `free-work-search -l "Paris"` (French tech board) on every run, since it is CLI-backed and cheap.
+
+Tag every result with its site as the `portal` (`linkedin`, `welcometothejungle`, `indeed`, `hellowork`, `free-work`) so the tracker dashboard (`python3 tools/tracker_app.py`) can show which sites produce jobs and responses.
 
 ## Installed portal CLIs (primary for `/scrape`)
 
@@ -9,9 +24,9 @@
 
 | CLI | Covers | How to call it for this strategy |
 |-----|--------|----------------------------------|
-| `free-work-search` | Free-Work - French tech/IT board: CDI, CDD, freelance, stage, alternance | `-q "<keyword>" -l "France"` (or `-l "Paris"` / `-l "Île-de-France"` / `-l "Lyon"`), `--jobage 14`, `--limit 20`. Add `-c cdi` or `-c freelance` when the user wants one contract type. |
-| `linkedin-search` | LinkedIn, any country | `-q "<keyword>" -l "France"` or `-l "Paris, Île-de-France, France"`, `--jobage 14`, `--limit 20` |
-| `freehire-search` | freehire.me ATS aggregator (catches startup postings from Ashby/Lever/Greenhouse) | `-q "<keyword>" --country FR`, `--jobage 14`, `--limit 20` |
+| `linkedin-search` | LinkedIn, any country | `-q "<keyword>" -l "Paris, Île-de-France, France"`, `--jobage 14`, `--limit 20` (`-l "France"` only when widening) |
+| `free-work-search` | Free-Work - French tech/IT board: CDI, CDD, freelance, stage, alternance | `-q "<keyword>" -l "Paris"` (or `-l "Île-de-France"`; `-l "France"` only when widening), `--jobage 14`, `--limit 20`. Add `-c cdi` or `-c freelance` when the user wants one contract type. |
+| `freehire-search` | freehire.me ATS aggregator (catches startup postings from Ashby/Lever/Greenhouse) | `-q "<keyword>" --country FR`, `--jobage 14`, `--limit 20`; keep Paris-area results |
 
 The Danish demo portals (`jobindex`, `jobnet`, `jobbank`, `jobdanmark`) ship `enabled: false` and only return Danish postings - leave them off for this strategy.
 
@@ -77,11 +92,15 @@ développeur LLM      | applied AI engineer
 WebSearch fallback:
 ```
 site:welcometothejungle.com "AI Engineer" OR "Ingénieur IA" Paris
-site:welcometothejungle.com "agents IA" OR "AI agents" CDI
-site:welcometothejungle.com "IA générative" développeur
-site:apec.fr "ingénieur IA générative"
-site:candidat.francetravail.fr "intelligence artificielle" développeur
-site:hellowork.com "ingénieur IA" OR "développeur IA"
+site:welcometothejungle.com "agents IA" OR "AI agents" Paris
+site:welcometothejungle.com "IA générative" développeur Paris
+site:fr.indeed.com "ingénieur IA" Paris
+site:fr.indeed.com "IA générative" OR "LLM" Paris
+site:fr.indeed.com "agents IA" développeur Paris
+site:hellowork.com "ingénieur IA" OR "développeur IA" Paris
+site:hellowork.com "IA générative" Paris
+site:apec.fr "ingénieur IA générative" Paris
+site:candidat.francetravail.fr "intelligence artificielle" développeur Paris
 site:jobs.stationf.co "AI engineer" OR "LLM"
 site:jobs.ashbyhq.com "AI Engineer" Paris
 site:jobs.lever.co "LLM" Paris
@@ -104,8 +123,10 @@ data scientist IA    | NLP
 WebSearch fallback:
 ```
 site:welcometothejungle.com "Machine Learning Engineer" Paris
-site:welcometothejungle.com MLOps CDI
-site:apec.fr "ingénieur machine learning"
+site:welcometothejungle.com MLOps Paris
+site:fr.indeed.com "machine learning engineer" OR MLOps Paris
+site:hellowork.com "machine learning" ingénieur Paris
+site:apec.fr "ingénieur machine learning" Paris
 site:job-boards.greenhouse.io "Machine Learning" Paris
 site:apply.workable.com "Machine Learning Engineer" Paris
 site:linkedin.com/jobs "MLOps" France
@@ -165,11 +186,12 @@ site:hellowork.com "alternance" "développeur IA"
 
 ## Location Filter
 
-Most French AI jobs are in Paris and Île-de-France; set the rest to match your own base and mobility once CLAUDE.md is filled in.
-- Paris & Île-de-France (incl. La Défense, Saclay, Vélizy) - main AI hub
-- Lyon, Grenoble, Toulouse, Nantes, Lille, Sophia-Antipolis/Nice - secondary tech hubs
-- Remote within France (`free-work-search --remote full`; `linkedin-search --remote remote`) - check whether the posting requires French residency
-- Outside France - out of scope for this strategy
+Paris is the target. Keep a result when it is:
+- Paris intra-muros - ideal
+- Île-de-France reachable by RER/metro (La Défense, Issy, Boulogne, Saint-Denis, Saclay, Vélizy, Massy) - acceptable
+- Remote or hybrid from France with occasional Paris office days - acceptable
+- Elsewhere in France (Lyon, Toulouse, Nantes, Lille, Sophia-Antipolis…) - drop unless the user widened the search
+- Outside France - out of scope
 
 ## Language Filter
 

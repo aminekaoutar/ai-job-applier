@@ -1,0 +1,472 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Application Tracker</title>
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --ink: #18202b; --muted: #637083; --line: #e3e7ed;
+  --accent: #2563eb; --shadow: 0 1px 2px rgba(16,24,40,.06), 0 1px 3px rgba(16,24,40,.08);
+  --c-responded: #16a34a; --c-waiting: #3b82f6; --c-ghosted: #9ca3af; --c-withdrawn: #a16207;
+  --c-not_sent: #64748b; --c-unknown: #ef4444;
+  --s-drafted: #64748b; --s-applied: #3b82f6; --s-interview: #f59e0b; --s-offer: #8b5cf6;
+  --s-hired: #16a34a; --s-rejected: #ef4444; --s-no_response: #9ca3af; --s-offer_declined: #0d9488; --s-withdrawn: #a16207;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f141a; --panel: #171e27; --ink: #e6ebf1; --muted: #93a1b3; --line: #273241;
+    --shadow: none; --c-ghosted: #6b7280; --s-no_response: #6b7280;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; padding: 16px 24px; background: var(--panel); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 2; }
+h1 { font-size: 18px; margin: 0; }
+h2 { font-size: 15px; margin: 0 0 12px; }
+h3 { font-size: 13px; margin: 0 0 10px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .03em; }
+nav { display: flex; gap: 4px; flex-wrap: wrap; }
+nav button { border: 0; background: none; color: var(--muted); padding: 8px 12px; border-radius: 8px; font: inherit; cursor: pointer; }
+nav button[aria-selected="true"] { background: var(--bg); color: var(--ink); font-weight: 600; }
+.badge-count { display: inline-block; min-width: 18px; padding: 0 6px; margin-left: 4px; border-radius: 9px; background: #f59e0b; color: #fff; font-size: 11px; font-weight: 700; text-align: center; }
+main { padding: 20px 24px 40px; max-width: 1280px; margin: 0 auto; }
+.muted { color: var(--muted); }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.card { background: var(--panel); border-radius: 10px; box-shadow: var(--shadow); border: 1px solid var(--line); padding: 14px 16px; border-left: 4px solid var(--k, var(--accent)); }
+.card .n { font-size: 26px; font-weight: 700; }
+.card .l { color: var(--muted); font-size: 12px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.panel { background: var(--panel); border-radius: 10px; box-shadow: var(--shadow); border: 1px solid var(--line); padding: 16px; min-width: 0; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 8px; font-size: 12px; color: var(--muted); }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+svg text { fill: var(--ink); font: 12px system-ui, sans-serif; }
+svg .axis { fill: var(--muted); font-size: 11px; }
+.toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
+input, select, textarea { font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; }
+button.btn { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 8px; padding: 6px 11px; cursor: pointer; }
+button.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.btn.small { padding: 3px 8px; font-size: 12px; }
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-size: 12px; color: var(--muted); font-weight: 600; white-space: nowrap; }
+tr:hover td { background: color-mix(in srgb, var(--bg) 60%, transparent); }
+.pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; color: #fff; background: var(--pc, #64748b); white-space: nowrap; }
+.notes { max-width: 320px; color: var(--muted); font-size: 12px; white-space: normal; }
+a { color: var(--accent); }
+.empty { padding: 28px; text-align: center; color: var(--muted); }
+form.add { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px; align-items: end; }
+form.add label { display: grid; gap: 3px; font-size: 12px; color: var(--muted); }
+.toast { position: fixed; bottom: 18px; right: 18px; background: var(--ink); color: var(--bg); padding: 10px 14px; border-radius: 8px; opacity: 0; transition: opacity .2s; pointer-events: none; max-width: 360px; }
+.toast.show { opacity: 1; }
+.hidden { display: none !important; }
+.ghost-ctl { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+.ghost-ctl input { width: 64px; }
+@media (max-width: 640px) { header, main { padding-left: 16px; padding-right: 16px; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Application Tracker</h1>
+  <nav role="tablist">
+    <button role="tab" data-tab="dashboard" aria-selected="true">Dashboard</button>
+    <button role="tab" data-tab="applications" aria-selected="false">Applications</button>
+    <button role="tab" data-tab="followups" aria-selected="false">Follow-ups<span id="fu-count" class="badge-count hidden"></span></button>
+    <button role="tab" data-tab="opportunities" aria-selected="false">Opportunities</button>
+  </nav>
+  <label class="ghost-ctl" title="An application with no reply for this many days counts as ghosted">
+    Ghosted after <input id="ghost-days" type="number" min="1" max="365"> days
+  </label>
+</header>
+
+<main>
+  <section id="tab-dashboard">
+    <div class="cards" id="cards"></div>
+    <div class="grid">
+      <div class="panel"><h3>Who replied?</h3><div id="chart-response"></div></div>
+      <div class="panel"><h3>Pipeline funnel</h3><div id="chart-funnel"></div></div>
+    </div>
+    <div class="grid">
+      <div class="panel"><h3>Applications per week (last 12 weeks)</h3><div id="chart-weekly"></div></div>
+      <div class="panel"><h3>Replies by site</h3><div id="chart-portal"></div></div>
+    </div>
+    <div class="grid">
+      <div class="panel"><h3>Current status</h3><div id="chart-status"></div></div>
+      <div class="panel"><h3>Recent activity</h3><div id="recent"></div></div>
+    </div>
+  </section>
+
+  <section id="tab-applications" class="hidden">
+    <div class="panel" style="margin-bottom:12px">
+      <h2>Add an application</h2>
+      <form class="add" id="add-form" autocomplete="off">
+        <label>Company*<input name="company" required></label>
+        <label>Role*<input name="role" required></label>
+        <label>Date applied<input name="date" type="date"></label>
+        <label>Status<select name="status"></select></label>
+        <label>Site / channel<select name="channel">
+          <option>LinkedIn</option><option>Welcome to the Jungle</option><option>Indeed</option>
+          <option>HelloWork</option><option>Free-Work</option><option>Company site</option>
+          <option>referral</option><option>other</option></select></label>
+        <label>Posting URL<input name="source" type="url" placeholder="https://"></label>
+        <label>Contact person<input name="contact_person"></label>
+        <label>Deadline<input name="deadline" type="date"></label>
+        <button class="btn primary" type="submit">Add</button>
+      </form>
+    </div>
+    <div class="panel">
+      <div class="toolbar">
+        <input id="q" type="search" placeholder="Search company, role, notes…" style="flex:1;min-width:200px">
+        <select id="f-response"><option value="">All replies</option><option value="responded">Responded</option><option value="waiting">Waiting</option><option value="ghosted">Ghosted</option><option value="not_sent">Not sent (drafted)</option><option value="withdrawn">Withdrawn</option></select>
+        <select id="f-status"><option value="">All statuses</option></select>
+        <select id="f-portal"><option value="">All sites</option></select>
+        <label class="muted"><input type="checkbox" id="f-open"> Open only</label>
+      </div>
+      <div class="table-wrap"><table id="apps-table"></table></div>
+    </div>
+  </section>
+
+  <section id="tab-followups" class="hidden">
+    <div class="panel">
+      <h2>Follow-ups due</h2>
+      <p class="muted" id="fu-help"></p>
+      <div class="table-wrap"><table id="fu-table"></table></div>
+    </div>
+  </section>
+
+  <section id="tab-opportunities" class="hidden">
+    <div class="panel">
+      <h2>Found but not applied yet</h2>
+      <p class="muted">Jobs from <code>/scrape</code>, scored by <code>/rank</code>. Use <code>/apply</code> in Claude Code to draft the CV and cover letter, then mark it applied here.</p>
+      <div class="toolbar">
+        <input id="oq" type="search" placeholder="Search…" style="flex:1;min-width:200px">
+        <select id="of-portal"><option value="">All sites</option></select>
+      </div>
+      <div class="table-wrap"><table id="opp-table"></table></div>
+    </div>
+  </section>
+</main>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+"use strict";
+const TOKEN = "__TRACKER_TOKEN__";
+const RESP = {
+  responded: "Responded", waiting: "Waiting", ghosted: "Ghosted",
+  withdrawn: "Withdrawn", not_sent: "Not sent", unknown: "Unknown status",
+};
+let DATA = null;
+
+const $ = (s) => document.querySelector(s);
+const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const cssVar = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const label = (s) => String(s || "").replace(/_/g, " ");
+const safeUrl = (u) => /^https?:\/\//i.test(u || "") ? u : "";
+
+function store(k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { return null; } }
+
+function toast(msg) {
+  const t = $("#toast"); t.textContent = msg; t.classList.add("show");
+  clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove("show"), 2600);
+}
+
+async function load() {
+  const days = Number($("#ghost-days").value) || 21;
+  const r = await fetch(`/api/data?ghost_days=${days}`);
+  DATA = await r.json();
+  render();
+}
+
+async function edit(action, payload) {
+  const r = await fetch("/api/edit", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Tracker-Token": TOKEN },
+    body: JSON.stringify({ version: DATA.version, action, payload }),
+  });
+  const out = await r.json().catch(() => ({}));
+  if (!r.ok) { toast(out.error || "Save failed"); await load(); return false; }
+  await load();
+  return true;
+}
+
+// ---------- charts (inline SVG) ----------
+function donut(el, parts, centerLabel) {
+  const total = parts.reduce((s, p) => s + p.value, 0);
+  const R = 70, r = 44, cx = 90, cy = 90;
+  let svg = `<svg viewBox="0 0 380 180" width="100%" role="img" aria-label="${esc(parts.map(p => `${p.value} ${p.label}`).join(", "))}">`;
+  if (!total) {
+    svg += `<circle cx="${cx}" cy="${cy}" r="${(R + r) / 2}" fill="none" stroke="${cssVar("--line")}" stroke-width="${R - r}"/>`;
+  } else {
+    let a0 = -Math.PI / 2;
+    for (const p of parts) {
+      if (!p.value) continue;
+      const frac = p.value / total;
+      if (frac >= 0.9999) {
+        svg += `<circle cx="${cx}" cy="${cy}" r="${(R + r) / 2}" fill="none" stroke="${p.color}" stroke-width="${R - r}"><title>${esc(p.label)}: ${p.value}</title></circle>`;
+        break;
+      }
+      const a1 = a0 + frac * 2 * Math.PI, big = frac > 0.5 ? 1 : 0;
+      const pt = (rad, a) => `${cx + rad * Math.cos(a)} ${cy + rad * Math.sin(a)}`;
+      svg += `<path d="M${pt(R, a0)} A${R} ${R} 0 ${big} 1 ${pt(R, a1)} L${pt(r, a1)} A${r} ${r} 0 ${big} 0 ${pt(r, a0)} Z" fill="${p.color}"><title>${esc(p.label)}: ${p.value}</title></path>`;
+      a0 = a1;
+    }
+  }
+  svg += `<text x="${cx}" y="${cy - 2}" text-anchor="middle" style="font-size:22px;font-weight:700">${esc(centerLabel ?? total)}</text>`;
+  svg += `<text x="${cx}" y="${cy + 16}" text-anchor="middle" class="axis">${total ? "applications" : "no data yet"}</text>`;
+  let y = 30;
+  for (const p of parts) {
+    const pct = total ? Math.round((p.value / total) * 100) : 0;
+    svg += `<rect x="190" y="${y - 10}" width="12" height="12" rx="3" fill="${p.color}"/><text x="210" y="${y}">${esc(p.label)}</text><text x="370" y="${y}" text-anchor="end" style="font-weight:600">${p.value} <tspan class="axis">(${pct}%)</tspan></text>`;
+    y += 24;
+  }
+  el.innerHTML = svg + "</svg>";
+}
+
+function hbars(el, rows, opts = {}) {
+  // rows: [{label, segments:[{value,color,name}]}]
+  if (!rows.length) { el.innerHTML = `<div class="empty">No data yet</div>`; return; }
+  const max = Math.max(1, ...rows.map(r => r.segments.reduce((s, x) => s + x.value, 0)));
+  const lw = 150, w = 520, bh = 22, gap = 10, h = rows.length * (bh + gap) + 6;
+  const room = rows.some(r => r.suffix) ? 120 : 50; // space kept right of the longest bar for its label
+  let svg = `<svg viewBox="0 0 ${w} ${h}" width="100%" role="img" aria-label="${esc(rows.map(r => `${r.label}: ${r.segments.reduce((s, x) => s + x.value, 0)}`).join(", "))}">`;
+  rows.forEach((row, i) => {
+    const y = i * (bh + gap) + 2;
+    svg += `<text x="${lw - 8}" y="${y + bh / 2 + 4}" text-anchor="end">${esc(row.label)}</text>`;
+    let x = lw;
+    let tot = 0;
+    for (const s of row.segments) {
+      const bw = ((w - lw - room) * s.value) / max;
+      if (bw > 0) svg += `<rect x="${x}" y="${y}" width="${bw}" height="${bh}" rx="3" fill="${s.color}"><title>${esc(s.name || row.label)}: ${s.value}</title></rect>`;
+      x += bw; tot += s.value;
+    }
+    svg += `<text x="${x + 6}" y="${y + bh / 2 + 4}" style="font-weight:600">${tot}${row.suffix ? ` <tspan class="axis">${esc(row.suffix)}</tspan>` : ""}</text>`;
+  });
+  el.innerHTML = svg + "</svg>" + (opts.legend ? legend(opts.legend) : "");
+}
+
+function legend(items) {
+  return `<div class="legend">${items.map(i => `<span><i style="background:${i.color}"></i>${esc(i.label)}</span>`).join("")}</div>`;
+}
+
+function weekly(el, apps) {
+  const today = new Date(DATA.today + "T00:00:00");
+  const monday = (d) => { const x = new Date(d); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return x; };
+  const start = monday(today); start.setDate(start.getDate() - 7 * 11);
+  const weeks = Array.from({ length: 12 }, (_, i) => { const d = new Date(start); d.setDate(d.getDate() + 7 * i); return { d, responded: 0, waiting: 0, ghosted: 0, other: 0 }; });
+  for (const a of apps) {
+    if (!a.applied_on || a.status === "drafted") continue;
+    const idx = Math.floor((monday(new Date(a.applied_on + "T00:00:00")) - start) / (7 * 864e5));
+    if (idx < 0 || idx > 11) continue;
+    const k = ["responded", "waiting", "ghosted"].includes(a.response) ? a.response : "other";
+    weeks[idx][k]++;
+  }
+  const max = Math.max(1, ...weeks.map(w => w.responded + w.waiting + w.ghosted + w.other));
+  const W = 520, H = 190, pad = 26, bw = (W - pad) / 12 - 8;
+  let svg = `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Applications per week over the last 12 weeks">`;
+  svg += `<line x1="${pad}" y1="${H - 24}" x2="${W}" y2="${H - 24}" stroke="${cssVar("--line")}"/>`;
+  svg += `<text x="${pad - 6}" y="16" text-anchor="end" class="axis">${max}</text><text x="${pad - 6}" y="${H - 24}" text-anchor="end" class="axis">0</text>`;
+  weeks.forEach((w, i) => {
+    const x = pad + 4 + i * ((W - pad) / 12);
+    let y = H - 24;
+    for (const k of ["responded", "waiting", "ghosted", "other"]) {
+      const v = w[k]; if (!v) continue;
+      const bh = ((H - 44) * v) / max; y -= bh;
+      svg += `<rect x="${x}" y="${y}" width="${bw}" height="${bh}" fill="${cssVar(k === "other" ? "--c-not_sent" : `--c-${k}`)}"><title>${esc(RESP[k] || "Other")}: ${v}</title></rect>`;
+    }
+    if (i % 2 === 0 || i === 11) svg += `<text x="${x + bw / 2}" y="${H - 8}" text-anchor="middle" class="axis">${w.d.getDate()}/${w.d.getMonth() + 1}</text>`;
+  });
+  el.innerHTML = svg + "</svg>" + legend(["responded", "waiting", "ghosted"].map(k => ({ label: RESP[k], color: cssVar(`--c-${k}`) })));
+}
+
+// ---------- render ----------
+function render() {
+  const apps = DATA.applications;
+  const sent = apps.filter(a => a.status !== "drafted");
+  const count = (f) => sent.filter(f).length;
+  const responded = count(a => a.response === "responded");
+  const ghosted = count(a => a.response === "ghosted");
+  const waiting = count(a => a.response === "waiting");
+  const interviews = count(a => a.reached_interview);
+  const offers = count(a => ["offer", "hired", "offer_declined"].includes(a.status));
+  const drafted = apps.length - sent.length;
+  const due = apps.filter(a => a.followup_due);
+  const rate = sent.length ? Math.round((responded / sent.length) * 100) : 0;
+
+  const card = (n, l, color, title) => `<div class="card" style="--k:${color}" title="${esc(title || "")}"><div class="n">${esc(n)}</div><div class="l">${esc(l)}</div></div>`;
+  $("#cards").innerHTML = [
+    card(sent.length, "Applications sent", cssVar("--accent")),
+    card(`${rate}%`, "Response rate", cssVar("--c-responded"), "Replied (interview, offer or rejection) ÷ sent"),
+    card(responded, "Responded", cssVar("--c-responded")),
+    card(waiting, "Waiting for reply", cssVar("--c-waiting")),
+    card(ghosted, "Ghosted", cssVar("--c-ghosted"), `No reply after ${DATA.ghost_days}+ days, or marked no_response`),
+    card(interviews, "Reached interview", cssVar("--s-interview")),
+    card(offers, "Offers", cssVar("--s-offer")),
+    card(drafted, "Drafted, not sent", cssVar("--c-not_sent")),
+  ].join("");
+
+  donut($("#chart-response"), ["responded", "waiting", "ghosted", "withdrawn"].map(k => ({
+    label: RESP[k], value: count(a => a.response === k), color: cssVar(`--c-${k}`),
+  })), sent.length);
+
+  hbars($("#chart-funnel"), [
+    { label: "Sent", segments: [{ value: sent.length, color: cssVar("--accent") }] },
+    { label: "Got a reply", segments: [{ value: responded, color: cssVar("--c-responded") }], suffix: pct(responded, sent.length) },
+    { label: "Interview", segments: [{ value: interviews, color: cssVar("--s-interview") }], suffix: pct(interviews, sent.length) },
+    { label: "Offer", segments: [{ value: offers, color: cssVar("--s-offer") }], suffix: pct(offers, sent.length) },
+    { label: "Hired", segments: [{ value: count(a => a.status === "hired"), color: cssVar("--s-hired") }] },
+  ]);
+
+  weekly($("#chart-weekly"), apps);
+
+  const portals = {};
+  for (const a of sent) {
+    const p = portals[a.portal] ||= { responded: 0, waiting: 0, ghosted: 0, other: 0 };
+    p[["responded", "waiting", "ghosted"].includes(a.response) ? a.response : "other"]++;
+  }
+  hbars($("#chart-portal"), Object.entries(portals)
+    .sort((a, b) => sum(b[1]) - sum(a[1]))
+    .map(([name, p]) => ({
+      label: name,
+      suffix: pct(p.responded, sum(p)) + " replied",
+      segments: ["responded", "waiting", "ghosted", "other"].map(k => ({ value: p[k], name: RESP[k] || "Other", color: cssVar(k === "other" ? "--c-not_sent" : `--c-${k}`) })),
+    })), { legend: ["responded", "waiting", "ghosted"].map(k => ({ label: RESP[k], color: cssVar(`--c-${k}`) })) });
+
+  const byStatus = {};
+  for (const a of apps) byStatus[a.status || "(blank)"] = (byStatus[a.status || "(blank)"] || 0) + 1;
+  hbars($("#chart-status"), Object.entries(byStatus).sort((a, b) => b[1] - a[1]).map(([s, n]) => ({
+    label: label(s), segments: [{ value: n, color: cssVar(`--s-${s}`) || cssVar("--c-unknown") }],
+  })));
+
+  const recent = [...apps].filter(a => a.last_activity).sort((a, b) => b.last_activity.localeCompare(a.last_activity)).slice(0, 8);
+  $("#recent").innerHTML = recent.length ? `<table>${recent.map(a => `<tr><td class="muted" style="white-space:nowrap">${esc(a.last_activity)}</td><td><b>${esc(a.row.company)}</b><br><span class="muted">${esc(a.row.role)}</span></td><td>${pill(a.status)}</td></tr>`).join("")}</table>` : `<div class="empty">No applications yet. Add one in the Applications tab, or run /apply in Claude Code.</div>`;
+
+  const fc = $("#fu-count"); fc.textContent = due.length; fc.classList.toggle("hidden", !due.length);
+  fillSelect($("#f-status"), DATA.statuses.map(s => [s, label(s)]), "All statuses");
+  fillSelect($("#f-portal"), [...new Set(apps.map(a => a.portal))].sort().map(p => [p, p]), "All sites");
+  fillSelect($("#of-portal"), [...new Set(DATA.opportunities.map(o => o.portal))].sort().map(p => [p, p]), "All sites");
+  const st = document.querySelector("#add-form select[name=status]");
+  if (!st.options.length) { st.innerHTML = DATA.statuses.map(s => `<option value="${esc(s)}"${s === "applied" ? " selected" : ""}>${esc(label(s))}</option>`).join(""); }
+
+  renderApps(); renderFollowups(); renderOpps();
+}
+
+const sum = (o) => Object.values(o).reduce((s, v) => s + v, 0);
+const pct = (a, b) => b ? `${Math.round((a / b) * 100)}%` : "";
+function pill(s) { return `<span class="pill" style="--pc:${cssVar(`--s-${s}`) || cssVar("--c-unknown")}">${esc(label(s) || "—")}</span>`; }
+function rpill(r) { return `<span class="pill" style="--pc:${cssVar(`--c-${r}`)}">${esc(RESP[r] || r)}</span>`; }
+
+function fillSelect(sel, pairs, allLabel) {
+  const cur = sel.value;
+  sel.innerHTML = `<option value="">${esc(allLabel)}</option>` + pairs.map(([v, l]) => `<option value="${esc(v)}">${esc(l)}</option>`).join("");
+  sel.value = pairs.some(([v]) => v === cur) ? cur : "";
+}
+
+function renderApps() {
+  const q = $("#q").value.trim().toLowerCase();
+  const fr = $("#f-response").value, fs = $("#f-status").value, fp = $("#f-portal").value, open = $("#f-open").checked;
+  const rows = DATA.applications.filter(a =>
+    (!q || [a.row.company, a.row.role, a.row.notes, a.row.sector, a.row.contact_person].join(" ").toLowerCase().includes(q)) &&
+    (!fr || a.response === fr) && (!fs || a.status === fs) && (!fp || a.portal === fp) && (!open || !a.final)
+  ).sort((a, b) => (b.applied_on || "").localeCompare(a.applied_on || "") || a.row.company.localeCompare(b.row.company));
+  const t = $("#apps-table");
+  if (!rows.length) { t.innerHTML = `<tr><td class="empty">${DATA.applications.length ? "No application matches these filters." : "No applications yet."}</td></tr>`; return; }
+  t.innerHTML = `<thead><tr><th>Applied</th><th>Company / role</th><th>Site</th><th>Status</th><th>Reply</th><th>Quiet</th><th>Contact</th><th>Notes</th><th></th></tr></thead><tbody>` +
+    rows.map(a => {
+      const url = safeUrl(a.row.source);
+      const opts = DATA.statuses.map(s => `<option value="${esc(s)}"${s === a.status ? " selected" : ""}>${esc(label(s))}</option>`).join("") + (a.known_status ? "" : `<option selected>${esc(a.row.status)}</option>`);
+      return `<tr data-i="${a.index}">
+        <td style="white-space:nowrap">${esc(a.applied_on || a.row.date || "—")}</td>
+        <td><b>${esc(a.row.company)}</b><br>${url ? `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(a.row.role)}</a>` : esc(a.row.role)}</td>
+        <td>${esc(a.portal)}</td>
+        <td><select class="st" aria-label="Status">${opts}</select></td>
+        <td>${rpill(a.response)}</td>
+        <td style="white-space:nowrap">${a.days_quiet == null || a.final || a.status === "drafted" ? "—" : `${a.days_quiet} d`}${a.followups ? `<br><span class="muted">${a.followups} follow-up${a.followups > 1 ? "s" : ""}</span>` : ""}</td>
+        <td>${esc(a.row.contact_person || "—")}</td>
+        <td class="notes">${esc(a.row.notes || "")}</td>
+        <td style="white-space:nowrap"><button class="btn small note">+ Note</button>${a.status === "applied" ? ` <button class="btn small fu">Followed up</button>` : ""}</td>
+      </tr>`;
+    }).join("") + "</tbody>";
+}
+
+function rowRef(i) { const a = DATA.applications[i]; return { index: a.index, company: a.row.company, role: a.row.role }; }
+
+function renderFollowups() {
+  const due = DATA.applications.filter(a => a.followup_due).sort((a, b) => b.days_quiet - a.days_quiet);
+  $("#fu-help").textContent = `Applications still "applied" after ${DATA.followup_days}+ quiet days with fewer than 2 follow-ups. Use "/outcome followup <company>" in Claude Code to draft a short follow-up, send it, then click "Followed up".`;
+  const t = $("#fu-table");
+  if (!due.length) { t.innerHTML = `<tr><td class="empty">Nothing to chase right now.</td></tr>`; return; }
+  t.innerHTML = `<thead><tr><th>Company / role</th><th>Applied</th><th>Quiet</th><th>Follow-ups</th><th>Contact</th><th></th></tr></thead><tbody>` +
+    due.map(a => `<tr data-i="${a.index}"><td><b>${esc(a.row.company)}</b><br><span class="muted">${esc(a.row.role)}</span></td><td>${esc(a.applied_on || "—")}</td><td>${a.days_quiet} d</td><td>${a.followups}/2</td><td>${esc(a.row.contact_person || "—")}</td><td style="white-space:nowrap"><button class="btn small fu">Followed up</button> <button class="btn small ghost">Mark ghosted</button></td></tr>`).join("") + "</tbody>";
+}
+
+function renderOpps() {
+  const q = $("#oq").value.trim().toLowerCase(), fp = $("#of-portal").value;
+  const rows = DATA.opportunities.filter(o => (!q || [o.title, o.company, o.location].join(" ").toLowerCase().includes(q)) && (!fp || o.portal === fp));
+  const t = $("#opp-table");
+  if (!rows.length) { t.innerHTML = `<tr><td class="empty">${DATA.opportunities.length ? "No match." : "No open opportunities. Run /scrape then /rank in Claude Code."}</td></tr>`; return; }
+  t.innerHTML = `<thead><tr><th>Score</th><th>Job</th><th>Location</th><th>Site</th><th>Found</th><th>Deadline</th><th></th></tr></thead><tbody>` +
+    rows.map((o, i) => {
+      const url = safeUrl(o.url);
+      return `<tr data-o="${DATA.opportunities.indexOf(o)}"><td>${o.score == null ? `<span class="muted">${esc(o.fit || "unscored")}</span>` : `<b>${esc(o.score)}</b><br><span class="muted">${esc(o.verdict)}</span>`}</td>
+      <td><b>${esc(o.company)}</b><br>${url ? `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(o.title)}</a>` : esc(o.title)}</td>
+      <td>${esc(o.location || "—")}</td><td>${esc(o.portal)}</td><td>${esc(o.first_seen || "—")}</td><td>${esc(o.deadline || "—")}</td>
+      <td><button class="btn small applied">Mark applied</button></td></tr>`;
+    }).join("") + "</tbody>";
+}
+
+// ---------- events ----------
+document.querySelectorAll("nav button").forEach(b => b.addEventListener("click", () => showTab(b.dataset.tab)));
+function showTab(name) {
+  document.querySelectorAll("nav button").forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab === name)));
+  document.querySelectorAll("main > section").forEach(s => s.classList.toggle("hidden", s.id !== `tab-${name}`));
+  store("tracker.tab", name);
+}
+
+["#q", "#f-response", "#f-status", "#f-portal", "#f-open"].forEach(s => $(s).addEventListener("input", renderApps));
+["#oq", "#of-portal"].forEach(s => $(s).addEventListener("input", renderOpps));
+$("#ghost-days").addEventListener("change", () => { store("tracker.ghost", $("#ghost-days").value); load(); });
+
+$("#apps-table").addEventListener("change", async (e) => {
+  if (!e.target.classList.contains("st")) return;
+  const i = Number(e.target.closest("tr").dataset.i);
+  if (await edit("status", { ...rowRef(i), status: e.target.value })) toast("Status updated");
+});
+
+async function rowAction(e) {
+  const tr = e.target.closest("tr[data-i]"); if (!tr) return;
+  const i = Number(tr.dataset.i);
+  if (e.target.classList.contains("note")) {
+    const note = prompt("Add a note (e.g. 'call with recruiter'):");
+    if (note && note.trim() && await edit("note", { ...rowRef(i), note })) toast("Note added");
+  } else if (e.target.classList.contains("fu")) {
+    if (await edit("followup", rowRef(i))) toast("Follow-up logged");
+  } else if (e.target.classList.contains("ghost")) {
+    if (confirm("Mark this application as no response (ghosted)?") && await edit("status", { ...rowRef(i), status: "no_response" })) toast("Marked as ghosted");
+  }
+}
+$("#apps-table").addEventListener("click", rowAction);
+$("#fu-table").addEventListener("click", rowAction);
+
+$("#opp-table").addEventListener("click", async (e) => {
+  if (!e.target.classList.contains("applied")) return;
+  const o = DATA.opportunities[Number(e.target.closest("tr").dataset.o)];
+  if (await edit("add", { company: o.company, role: o.title, status: "applied", channel: o.portal, source: o.url, deadline: o.deadline })) toast(`Added ${o.company} to applications`);
+});
+
+$("#add-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const payload = Object.fromEntries(new FormData(e.target).entries());
+  if (await edit("add", payload)) { e.target.reset(); toast("Application added"); }
+});
+
+$("#ghost-days").value = store("tracker.ghost") || 21;
+const TABS = ["dashboard", "applications", "followups", "opportunities"];
+const fromHash = () => TABS.includes(location.hash.slice(1)) ? location.hash.slice(1) : null;
+window.addEventListener("hashchange", () => fromHash() && showTab(fromHash()));
+showTab(fromHash() || store("tracker.tab") || "dashboard");
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => DATA && render());
+load().catch(() => toast("Could not reach the tracker server - is it still running?"));
+setInterval(() => { if (document.visibilityState === "visible") load().catch(() => {}); }, 30000);
+</script>
+</body>
+</html>
