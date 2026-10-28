@@ -141,6 +141,8 @@ form.add label { display: grid; gap: 3px; font-size: 12px; color: var(--muted); 
       <div class="toolbar">
         <input id="oq" type="search" placeholder="Search…" style="flex:1;min-width:200px">
         <select id="of-portal"><option value="">All sites</option></select>
+        <select id="of-fit"><option value="">Any fit</option><option value="high">High fit</option><option value="medium">Medium fit</option><option value="low">Low fit</option></select>
+        <span class="muted" id="opp-count"></span>
       </div>
       <div class="table-wrap"><table id="opp-table"></table></div>
     </div>
@@ -400,16 +402,17 @@ function renderFollowups() {
 }
 
 function renderOpps() {
-  const q = $("#oq").value.trim().toLowerCase(), fp = $("#of-portal").value;
-  const rows = DATA.opportunities.filter(o => (!q || [o.title, o.company, o.location].join(" ").toLowerCase().includes(q)) && (!fp || o.portal === fp));
+  const q = $("#oq").value.trim().toLowerCase(), fp = $("#of-portal").value, ff = $("#of-fit").value;
+  const rows = DATA.opportunities.filter(o => (!q || [o.title, o.company, o.location].join(" ").toLowerCase().includes(q)) && (!fp || o.portal === fp) && (!ff || o.fit === ff));
+  $("#opp-count").textContent = `${rows.length} of ${DATA.opportunities.length} jobs`;
   const t = $("#opp-table");
   if (!rows.length) { t.innerHTML = `<tr><td class="empty">${DATA.opportunities.length ? "No match." : "No open opportunities. Run /scrape then /rank in Claude Code."}</td></tr>`; return; }
-  t.innerHTML = `<thead><tr><th>Score</th><th>Job</th><th>Location</th><th>Site</th><th>Found</th><th>Deadline</th><th></th></tr></thead><tbody>` +
+  t.innerHTML = `<thead><tr><th>Score / fit</th><th>Job</th><th>Location</th><th>Site</th><th>Posted</th><th>Deadline</th><th></th></tr></thead><tbody>` +
     rows.map((o, i) => {
       const url = safeUrl(o.url);
-      return `<tr data-o="${DATA.opportunities.indexOf(o)}"><td>${o.score == null ? `<span class="muted">${esc(o.fit || "unscored")}</span>` : `<b>${esc(o.score)}</b><br><span class="muted">${esc(o.verdict)}</span>`}</td>
+      return `<tr data-o="${DATA.opportunities.indexOf(o)}"><td>${o.score == null ? `<span class="muted">${o.fit ? esc(o.fit) + " fit" : "unscored"}</span>` : `<b>${esc(o.score)}</b><br><span class="muted">${esc(o.verdict)}</span>`}</td>
       <td><b>${esc(o.company)}</b><br>${url ? `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(o.title)}</a>` : esc(o.title)}</td>
-      <td>${esc(o.location || "—")}</td><td>${esc(o.portal)}</td><td>${esc(o.first_seen || "—")}</td><td>${esc(o.deadline || "—")}</td>
+      <td>${esc(o.location || "—")}</td><td style="white-space:nowrap">${esc(o.portal)}</td><td style="white-space:nowrap">${esc(o.posted_date || o.first_seen || "—")}</td><td>${esc(o.deadline || "—")}</td>
       <td><button class="btn small applied">Mark applied</button></td></tr>`;
     }).join("") + "</tbody>";
 }
@@ -423,7 +426,7 @@ function showTab(name) {
 }
 
 ["#q", "#f-response", "#f-status", "#f-portal", "#f-open"].forEach(s => $(s).addEventListener("input", renderApps));
-["#oq", "#of-portal"].forEach(s => $(s).addEventListener("input", renderOpps));
+["#oq", "#of-portal", "#of-fit"].forEach(s => $(s).addEventListener("input", renderOpps));
 $("#ghost-days").addEventListener("change", () => { store("tracker.ghost", $("#ghost-days").value); load(); });
 
 $("#apps-table").addEventListener("change", async (e) => {

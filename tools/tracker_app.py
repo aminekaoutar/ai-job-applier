@@ -245,9 +245,12 @@ def read_opportunities(path: Path, applied_pairs: set) -> list[dict]:
             "score": e.get("rank_score"),
             "verdict": e.get("rank_verdict") or "",
         })
-    # Scored jobs first, best score first; unscored ones after, newest first.
+    # Scored jobs first, best score first; unscored ones after, by /scrape's
+    # quick fit (high, medium, low), newest posting first within each.
     scored = sorted((o for o in out if isinstance(o["score"], (int, float))), key=lambda o: -o["score"])
-    unscored = sorted((o for o in out if not isinstance(o["score"], (int, float))), key=lambda o: str(o["first_seen"]), reverse=True)
+    unscored = [o for o in out if not isinstance(o["score"], (int, float))]
+    unscored.sort(key=lambda o: str(o["posted_date"] or o["first_seen"]), reverse=True)
+    unscored.sort(key=lambda o: {"high": 0, "medium": 1}.get(o["fit"], 2))
     return scored + unscored
 
 

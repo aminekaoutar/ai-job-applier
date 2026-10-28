@@ -16,6 +16,8 @@ Every `/scrape` run covers these four sites for **Paris / Île-de-France**, in t
 
 Plus `free-work-search -l "Paris"` (French tech board) on every run, since it is CLI-backed and cheap.
 
+**Volume: cast a wide net.** Treat every `/scrape` as `broad` - run **all** query categories, not just the top 3, and page through each CLI query (up to 3 pages: `--page 1..3`) until a page comes back short. A run like this yields 300+ unique Paris postings; `/rank` and the tracker's Opportunities tab (fit filter) narrow them down afterwards. Keep LinkedIn paced (a short pause between calls) - volume comes from many queries, not hammering one portal.
+
 Tag every result with its site as the `portal` (`linkedin`, `welcometothejungle`, `indeed`, `hellowork`, `free-work`) so the tracker dashboard (`python3 tools/tracker_app.py`) can show which sites produce jobs and responses.
 
 ## Installed portal CLIs (primary for `/scrape`)
