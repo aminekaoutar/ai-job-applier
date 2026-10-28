@@ -1,84 +1,187 @@
 # Search Queries for Job Scraper
 
-<!-- SETUP: Customize these queries based on your skills, target roles, and location -->
+<!-- Market: France. Focus: AI / GenAI / LLM / agentic-AI engineering and development.
+     Adjust the Location Filter below to your own base once /setup has filled CLAUDE.md. -->
 
 ## Installed portal CLIs (primary for `/scrape`)
 
-`/scrape` discovers every portal skill under `.agents/skills/*/SKILL.md` and runs its CLI first. Shipped country-agnostic CLIs include `linkedin-search` and `freehire-search`; Danish demos and any skill you add with `/add-portal` are included the same way. You do **not** need a matching `site:` line below for those CLIs to run.
+`/scrape` discovers every portal skill under `.agents/skills/*/SKILL.md` and runs its CLI first. For the French market the relevant CLIs are:
 
-The `site:` query templates in this file are the **WebSearch fallback** — for portals without a CLI, company career pages, or when a CLI fails.
+| CLI | Covers | How to call it for this strategy |
+|-----|--------|----------------------------------|
+| `free-work-search` | Free-Work - French tech/IT board: CDI, CDD, freelance, stage, alternance | `-q "<keyword>" -l "France"` (or `-l "Paris"` / `-l "Île-de-France"` / `-l "Lyon"`), `--jobage 14`, `--limit 20`. Add `-c cdi` or `-c freelance` when the user wants one contract type. |
+| `linkedin-search` | LinkedIn, any country | `-q "<keyword>" -l "France"` or `-l "Paris, Île-de-France, France"`, `--jobage 14`, `--limit 20` |
+| `freehire-search` | freehire.me ATS aggregator (catches startup postings from Ashby/Lever/Greenhouse) | `-q "<keyword>" --country FR`, `--jobage 14`, `--limit 20` |
 
-**Language scope:** write every query category in every language listed in your CLAUDE.md Languages table (typically 1-2, sometimes more). A posting requiring a language you have *not* declared, as a job condition, is excluded before scoring; a posting requiring a *higher level* than you declared in a language you *do* work in is flagged for your own judgment, not excluded — see `04-job-evaluation.md`'s Language Gate, the single source of truth for this rule. Translate each category's keywords rather than machine-translating word-for-word (e.g. "Frontend Developer" -> "Desarrollador Frontend", not a literal word-for-word translation) if you work in more than one language.
+The Danish demo portals (`jobindex`, `jobnet`, `jobbank`, `jobdanmark`) ship `enabled: false` and only return Danish postings - leave them off for this strategy.
+
+The `site:` query templates below are the **WebSearch fallback** - for French boards without a CLI (Welcome to the Jungle, APEC, France Travail, HelloWork, Indeed, JobTeaser, Station F) and for company career pages.
+
+**Language scope:** write every query category in every language listed in your CLAUDE.md Languages table. For France that is normally **French and English** - French AI postings mix both ("Ingénieur IA générative", "AI Engineer (H/F)"), so each category below carries both. A posting requiring a language you have *not* declared is excluded before scoring; a posting requiring a *higher level* than you declared is flagged, not excluded - see `04-job-evaluation.md`'s Language Gate.
 
 ## Search Sites
 
-Primary (your market's job boards - scaffold one with `/add-portal`):
-- **[YOUR_JOB_BOARD]** - your market's largest general job board
-- **linkedin.com/jobs** - LinkedIn job listings (filter: [YOUR_COUNTRY] / [YOUR_CITY]); also covered by `linkedin-search` CLI
-- **[YOUR_INDUSTRY_JOB_BOARD]** - a niche/industry board for your field (optional)
-- **[YOUR_ADDITIONAL_JOB_BOARD]** - another major board for your market (optional)
+Primary (CLI-backed):
+- **free-work.com** - French IT/tech board, the main source for CDI and freelance AI/data roles at ESNs, consultancies and end clients (`free-work-search` CLI)
+- **linkedin.com/jobs** - filter `France` / `Paris, Île-de-France, France` (`linkedin-search` CLI)
 
-Secondary (company career pages via Google):
-- Direct Google searches with `site:` filters for known target companies
+Primary (WebSearch fallback only - no CLI: these boards disallow automated search in robots.txt or sit behind bot protection):
+- **welcometothejungle.com** - the reference board for French startups and scale-ups, including most Paris AI startups
+- **apec.fr** - cadres (executive/engineer-level) postings, CDI-heavy
+- **candidat.francetravail.fr** - France Travail (ex-Pôle emploi), the national public board
+- **hellowork.com** - large general French board
+- **fr.indeed.com** - aggregator
+- **jobteaser.com** - internships, alternance and junior roles (school-linked)
+- **jobs.stationf.co** - jobs at Station F's startups (Paris startup campus)
+- **lesjeudis.com** - IT-specialist board
+
+Company career pages (WebSearch `site:` - French AI labs, AI-native startups and AI-heavy scale-ups):
+
+| Company | Focus | Careers |
+|---------|-------|---------|
+| Mistral AI | LLMs, agents platform | mistral.ai/careers, welcometothejungle.com/fr/companies/mistral-ai |
+| Hugging Face | open-source ML / LLM tooling | apply.workable.com/huggingface |
+| H Company | agentic AI / computer-use agents | hcompany.ai/careers, jobs.ashbyhq.com/hcompany |
+| Dust | enterprise AI agents | jobs.ashbyhq.com/dust |
+| Photoroom | generative image AI | jobs.ashbyhq.com/photoroom |
+| Owkin | AI for biomedical research | jobs.ashbyhq.com/owkin |
+| Dataiku | enterprise AI / ML platform | job-boards.greenhouse.io/dataiku |
+| Giskard | LLM / agent testing & evaluation | welcometothejungle.com/fr/companies/giskard |
+| Alan | health insurance, heavy internal AI use | jobs.ashbyhq.com/alan |
+| Doctolib | health tech, AI features | careers.doctolib.com |
+| Kyutai | open AI research lab (non-profit) | kyutai.org |
+
+ATS-wide sweeps catch the many smaller Paris AI startups that post on the same hosts:
+`site:jobs.ashbyhq.com`, `site:jobs.lever.co`, `site:job-boards.greenhouse.io`, `site:apply.workable.com` + `Paris` + the keyword.
 
 ## Query Categories
 
-Queries are grouped by priority. Write **each category in every language from your Languages table** (see Language scope above). Combine each query with your location terms (e.g. your city, region, or metro area) where the site supports it.
+Grouped by priority and organised by **function, not job title** - French postings use many titles for the same work (an "Ingénieur IA" at one company is a "Développeur LLM", "AI Engineer" or "Consultant IA générative" elsewhere). CLI keyword lists come first (pass each as `-q`), then the WebSearch `site:` fallbacks.
 
-**Organize by function, not job title.** The same underlying work carries different titles across companies and markets (a "Data Scientist" role at one employer may be posted as "Insights Analyst" or "Data Consultant" at another). Name each priority category after the function it covers, and list several plausible job titles as query variants within that category rather than betting an entire priority tier on one exact title string.
+### Priority 1: Building GenAI / LLM applications and AI agents
 
-### Priority 1: [YOUR_PRIMARY_ROLE_TYPE]
+Engineers who build products on top of LLMs: agents, RAG, tool use / MCP, evaluation, LLM integration.
 
-These match your strongest and most desired career direction.
-
+CLI keywords (FR + EN):
 ```
-site:[YOUR_JOB_BOARD] "[YOUR_PRIMARY_JOB_TITLE_1]" [YOUR_CITY]
-site:[YOUR_JOB_BOARD] "[YOUR_PRIMARY_JOB_TITLE_2]" [YOUR_CITY]
-site:[YOUR_JOB_BOARD] "[YOUR_KEY_SKILL]" [YOUR_CITY]
-site:linkedin.com/jobs "[YOUR_PRIMARY_JOB_TITLE_1]" [YOUR_COUNTRY]
-```
-
-### Priority 2: [YOUR_DOMAIN_EXPERTISE]
-
-These match your domain expertise.
-
-```
-site:[YOUR_JOB_BOARD] [YOUR_DOMAIN_KEYWORD_1] [YOUR_CITY] OR [YOUR_REGION]
-site:[YOUR_JOB_BOARD] [YOUR_DOMAIN_KEYWORD_2] [YOUR_COUNTRY]
-site:linkedin.com/jobs [YOUR_DOMAIN_KEYWORD_1] [YOUR_CITY] [YOUR_COUNTRY]
+agents IA            | AI agent
+IA agentique         | agentic AI
+IA générative        | generative AI
+ingénieur IA         | AI engineer
+développeur IA       | AI developer
+ingénieur LLM        | LLM engineer
+RAG                  | MCP
+développeur LLM      | applied AI engineer
 ```
 
-### Priority 3: [YOUR_ADJACENT_ROLE_TYPE]
-
-Adjacent roles you could pivot into.
-
+WebSearch fallback:
 ```
-site:[YOUR_JOB_BOARD] "[YOUR_ADJACENT_TITLE_1]" [YOUR_KEY_SKILL] [YOUR_CITY]
-site:[YOUR_JOB_BOARD] "[YOUR_ADJACENT_TITLE_2]" [YOUR_KEY_SKILL] [YOUR_CITY]
+site:welcometothejungle.com "AI Engineer" OR "Ingénieur IA" Paris
+site:welcometothejungle.com "agents IA" OR "AI agents" CDI
+site:welcometothejungle.com "IA générative" développeur
+site:apec.fr "ingénieur IA générative"
+site:candidat.francetravail.fr "intelligence artificielle" développeur
+site:hellowork.com "ingénieur IA" OR "développeur IA"
+site:jobs.stationf.co "AI engineer" OR "LLM"
+site:jobs.ashbyhq.com "AI Engineer" Paris
+site:jobs.lever.co "LLM" Paris
+site:linkedin.com/jobs "AI Engineer" France
 ```
 
-### Priority 4: Broader Technical / Consulting
+### Priority 2: ML engineering, MLOps and LLMOps
 
-Wider net for general technical roles.
+Training, fine-tuning, serving and running models in production.
 
+CLI keywords (FR + EN):
 ```
-site:[YOUR_JOB_BOARD] [YOUR_KEY_SKILL] developer [YOUR_CITY]
-site:linkedin.com/jobs "[YOUR_KEY_SKILL] developer" [YOUR_CITY]
-site:[YOUR_JOB_BOARD] "technical consultant" [YOUR_DOMAIN] [YOUR_CITY]
+ML engineer          | machine learning engineer
+ingénieur machine learning
+MLOps                | LLMOps
+fine-tuning          | deep learning
+data scientist IA    | NLP
+```
+
+WebSearch fallback:
+```
+site:welcometothejungle.com "Machine Learning Engineer" Paris
+site:welcometothejungle.com MLOps CDI
+site:apec.fr "ingénieur machine learning"
+site:job-boards.greenhouse.io "Machine Learning" Paris
+site:apply.workable.com "Machine Learning Engineer" Paris
+site:linkedin.com/jobs "MLOps" France
+```
+
+### Priority 3: Software engineering at AI-first companies
+
+Backend / full-stack / platform roles where the product is AI - a strong entry route into the AI labs and agent startups above.
+
+CLI keywords (FR + EN):
+```
+développeur Python IA      | Python developer AI
+développeur fullstack IA   | full-stack engineer AI
+backend LLM                | software engineer AI
+```
+
+WebSearch fallback:
+```
+site:jobs.ashbyhq.com "Software Engineer" Paris AI
+site:welcometothejungle.com "Software Engineer" "IA" Paris startup
+site:mistral.ai/careers "Software Engineer"
+site:jobs.stationf.co "Software Engineer"
+```
+
+### Priority 4: AI consulting, solutions and adoption
+
+Consulting / forward-deployed / solutions roles: deploying GenAI and agents at clients, AI tooling enablement (Claude Code, Copilot), AI architecture. Common at ESNs and consultancies - mostly on Free-Work.
+
+CLI keywords (FR + EN):
+```
+consultant IA générative  | AI consultant
+architecte IA             | AI architect
+forward deployed engineer | solutions engineer AI
+Claude Code               | copilot IA
+```
+
+WebSearch fallback:
+```
+site:welcometothejungle.com "consultant IA" OR "AI consultant"
+site:apec.fr "consultant IA générative"
+site:linkedin.com/jobs "Forward Deployed Engineer" Paris
+```
+
+### Priority 5: Internships, alternance and junior AI roles
+
+Only if the user is early-career or wants a work-study contract.
+
+CLI: `free-work-search` with `-c stage,alternance` and the Priority 1-2 keywords.
+
+WebSearch fallback:
+```
+site:jobteaser.com "stage" "intelligence artificielle"
+site:jobteaser.com "alternance" "IA générative"
+site:welcometothejungle.com "stage" "AI engineer" Paris
+site:hellowork.com "alternance" "développeur IA"
 ```
 
 ## Location Filter
 
-When evaluating results, verify the job location is within reasonable commute distance from your home. Define acceptable areas:
-- [YOUR_CITY] and surrounding areas
-- [ACCEPTABLE_AREA_1]
-- [ACCEPTABLE_AREA_2]
-- [BORDERLINE_AREA] (borderline - ~X min by transit)
-- [TOO_FAR_AREA] (too far)
+Most French AI jobs are in Paris and Île-de-France; set the rest to match your own base and mobility once CLAUDE.md is filled in.
+- Paris & Île-de-France (incl. La Défense, Saclay, Vélizy) - main AI hub
+- Lyon, Grenoble, Toulouse, Nantes, Lille, Sophia-Antipolis/Nice - secondary tech hubs
+- Remote within France (`free-work-search --remote full`; `linkedin-search --remote remote`) - check whether the posting requires French residency
+- Outside France - out of scope for this strategy
 
 ## Language Filter
 
-Your working languages and levels are in CLAUDE.md's Languages table. When filtering scraped results, apply `04-job-evaluation.md`'s Language Gate: a posting requiring a language you haven't declared at all is excluded; a posting requiring a higher level than you declared in a language you do work in is not excluded, flag it clearly instead (see `job-scraper/SKILL.md`'s Step 3 "Quick Fit Assessment" for how the flag surfaces in `/scrape` output). Postings simply *written* in a language you don't work in, that don't require it on the job, are fine.
+Your working languages and levels are in CLAUDE.md's Languages table. Apply `04-job-evaluation.md`'s Language Gate: a posting requiring a language you haven't declared at all is excluded; a posting requiring a higher level than you declared in a language you do work in is flagged, not excluded. Paris AI labs and startups often post and work in English, while ESN/consultancy postings are mostly in French and usually require French for client work - judge by the stated requirement, not the posting's language.
+
+## Contract Types (France)
+
+Record the contract on every result - it changes the evaluation:
+- **CDI** (permanent) / **CDD** (fixed-term) - salaried
+- **Freelance / portage** - daily rate (TJM); Free-Work shows it as `EUR/jour`
+- **Stage** (internship, max 6 months) / **Alternance** (work-study)
+- **ESN** postings (consultancy placing you at a client) - note the end client when the description names it
 
 ## Date Filter
 
@@ -87,4 +190,6 @@ Only include jobs posted within the last 14 days, or with an application deadlin
 ## Adapting Queries
 
 If the user specifies a focus area, select queries from the matching category and also generate 2-3 custom queries for that focus. For example:
-- "/scrape [focus_area]" -> relevant category queries + custom focus-specific queries
+- "/scrape agents" -> Priority 1 agent keywords + `"Claude Agent SDK"`, `"LangGraph"`, `"multi-agent"`
+- "/scrape freelance" -> every category through `free-work-search -c freelance`
+- "/scrape Lyon" -> every category with `-l "Lyon"` on the CLIs and `Lyon` on the fallbacks
