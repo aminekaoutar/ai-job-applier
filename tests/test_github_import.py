@@ -93,8 +93,21 @@ class Projects(unittest.TestCase):
         self.assertNotIn("HuggingFace", counts["new_skills"])
         self.assertNotIn("Tailwind CSS", counts["new_skills"])
         self.assertEqual(profile["basics"]["github"], "github.com/u")
+        projects, _ = gi.to_projects(self.repos(), use_claude=False)
         profile, counts = gi.merge_into_profile(profile, projects, "u")
         self.assertEqual((counts["added"], counts["updated"]), (0, 2))
+
+    def test_cv_project_named_in_readme_is_linked_not_duplicated(self):
+        profile = ps.empty_profile()
+        profile["projects"] = [{"id": "x", "name": "Application RAG – chatbot", "role": "Projet", "start": "", "end": "",
+                                "url": "", "bullets": ["My own wording"], "skills": ["Python"]}]
+        projects, _ = gi.to_projects(self.repos(), use_claude=False)
+        profile, counts = gi.merge_into_profile(profile, projects, "u")
+        self.assertEqual(counts["linked"], 1)
+        cv_project = profile["projects"][0]
+        self.assertEqual(cv_project["bullets"], ["My own wording"])
+        self.assertEqual(cv_project["url"], "https://github.com/u/Application-RAG")
+        self.assertIn("FAISS", cv_project["skills"])
 
 
 if __name__ == "__main__":

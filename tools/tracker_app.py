@@ -606,10 +606,11 @@ def make_handler(tracker: Path, seen: Path, token: str, port_ref: dict, lock: th
                 except github_import.GitHubError as exc:
                     raise ValueError(str(exc)) from exc
                 github_cache[user.lower()] = repos
-                known = {p["url"].rstrip("/").lower() for p in ps.load_profile(profile_dir)["projects"] if p.get("url")}
+                mine = ps.load_profile(profile_dir)["projects"]
                 return self._json(HTTPStatus.OK, {"user": user, "repos": [
                     {k: r[k] for k in ("repo", "name", "url", "description", "skills", "stars", "pushed", "has_content")}
-                    | {"excerpt": r["readme"][:280], "in_profile": r["url"].rstrip("/").lower() in known}
+                    | {"excerpt": r["readme"][:280],
+                       "in_profile": github_import.existing_project(github_import.repo_match_text(r), r["url"], mine) is not None}
                     for r in repos]})
 
             if path == "/api/github/import":

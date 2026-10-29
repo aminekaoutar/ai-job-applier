@@ -226,22 +226,58 @@ def to_projects(repos: list[dict], use_claude: bool, language: str = "French") -
         projects.append({
             "id": ps.new_id(), "name": r["name"], "role": "GitHub", "start": _month(r["created"]),
             "end": _month(r["pushed"]), "url": r["url"], "bullets": bullets[:3], "skills": skills[:10],
+            "_match_text": repo_match_text(r),
         })
     return projects, warnings
 
 
+def _alnum(text: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", ps.fold(text))
+
+
+def existing_project(repo_text: str, repo_url: str, projects: list[dict]) -> int | None:
+    """Index of the profile project this repo already is: same URL, or the project's
+    name (before any " – " subtitle) named in the repo's name, description or README."""
+    url = repo_url.rstrip("/").lower()
+    text = _alnum(repo_text)
+    for i, p in enumerate(projects):
+        if p.get("url") and p["url"].rstrip("/").lower() == url:
+            return i
+        head = _alnum(re.split(r"\s[–—|:-]\s|\(", p.get("name") or "")[0])
+        if len(head) >= 5 and head in text:
+            return i
+    return None
+
+
+def repo_match_text(repo: dict) -> str:
+    return f"{repo['repo']} {repo['name']} {repo['description']} {repo['readme'][:1500]}"
+
+
 def merge_into_profile(profile: dict, projects: list[dict], github_user: str) -> tuple[dict, dict]:
-    """Add projects (replacing ones with the same repo URL) and their skills; returns (profile, counts)."""
-    by_url = {p["url"].rstrip("/").lower(): i for i, p in enumerate(profile["projects"]) if p.get("url")}
-    added = updated = 0
+    """Add repo projects and their skills; returns (profile, counts).
+
+    A repo that is already a profile project (see existing_project) is not
+    duplicated: an imported GitHub entry is refreshed, while a project that
+    came from the CV keeps its own wording and only gains the repo link and
+    the repo's skills.
+    """
+    added = updated = linked = 0
     for p in projects:
-        k = p["url"].rstrip("/").lower()
-        if k in by_url:
-            profile["projects"][by_url[k]] = {**p, "id": profile["projects"][by_url[k]]["id"]}
-            updated += 1
-        else:
+        text = p.pop("_match_text", p["name"])
+        i = existing_project(text, p["url"], profile["projects"])
+        if i is None:
             profile["projects"].append(p)
             added += 1
+            continue
+        current = profile["projects"][i]
+        if current.get("role") == "GitHub":
+            profile["projects"][i] = {**p, "id": current["id"]}
+            updated += 1
+        else:
+            current["url"] = current.get("url") or p["url"]
+            have = {_alnum(s) for s in current.get("skills", [])}
+            current["skills"] = current.get("skills", []) + [s for s in p["skills"] if _alnum(s) not in have]
+            linked += 1
     def key(s):  # "HuggingFace" == "Hugging Face", "Tailwind CSS" == "Tailwind"
         k = re.sub(r"[^a-z0-9+#]", "", ps.fold(s))
         return k[:-3] if k.endswith("css") and len(k) > 3 else k
@@ -256,4 +292,4 @@ def merge_into_profile(profile: dict, projects: list[dict], github_user: str) ->
     profile["skills"] += new_skills
     if not profile["basics"].get("github"):
         profile["basics"]["github"] = f"github.com/{github_user}"
-    return profile, {"added": added, "updated": updated, "new_skills": new_skills}
+    return profile, {"added": added, "updated": updated, "linked": linked, "new_skills": new_skills}

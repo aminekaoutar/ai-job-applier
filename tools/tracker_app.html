@@ -1256,7 +1256,7 @@ $("#gh-import").addEventListener("click", async () => {
     PROF = out; P = JSON.parse(JSON.stringify(out.profile)); dirty = false;
     renderProfile(); load();
     const g = out.github;
-    $("#gh-status").innerHTML = `Added <b>${g.added}</b> projects${g.updated ? `, updated ${g.updated}` : ""}` +
+    $("#gh-status").innerHTML = `Added <b>${g.added}</b> projects${g.updated ? `, updated ${g.updated}` : ""}${g.linked ? `, linked ${g.linked} to projects already on your CV` : ""}` +
       (g.new_skills.length ? ` and ${g.new_skills.length} new skills: ${g.new_skills.map(esc).join(", ")}` : "") + "." +
       (out.warnings || []).map(w => `<div class="warn">${esc(w)}</div>`).join("");
     document.querySelectorAll("#gh-list input:checked").forEach(i => { i.checked = false; i.closest(".repo").classList.remove("on"); });
