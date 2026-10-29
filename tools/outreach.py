@@ -113,9 +113,46 @@ def company_site_from_name(company: str) -> dict | None:
     return {"url": f"https://{exact[0]['domain']}", "guessed": len(exact) == 1, "ambiguous": len(exact) > 1}
 
 
+_ROBOTS = {}  # host -> robots.txt body, None (no policy published) or "" (unconfirmed)
+
+
+def site_allows(url: str) -> tuple[bool, str]:
+    """robots_check's rules with one robots.txt read per host instead of one per page.
+
+    Same decisions as robots_check.gate: 404 means no policy (allowed), a body
+    that is not a robots.txt or cannot be read leaves permission unconfirmed
+    (not allowed), and a Disallow for Claude-User or * blocks the path.
+    """
+    import robots_check
+    parts = urllib.parse.urlsplit(url)
+    if parts.scheme not in ("http", "https") or not parts.netloc:
+        return False, "unsupported URL"
+    host = f"{parts.scheme}://{parts.netloc}"
+    if host not in _ROBOTS:
+        body = ""
+        try:
+            text, code = robots_check._fetch(f"{host}/robots.txt", "Claude-User")
+            if code == 404:
+                body = None
+            elif code == 200 and robots_check.is_robots_body(text) and not robots_check.has_undecodable_rule(text):
+                body = text
+        except Exception:
+            body = ""
+        _ROBOTS[host] = body
+    body = _ROBOTS[host]
+    if body is None:
+        return True, "no robots.txt"
+    if body == "":
+        return False, "robots.txt unconfirmed"
+    path = urllib.parse.unquote(parts.path) or "/"
+    for agent in ("Claude-User", "*"):
+        if not robots_check.allowed(body, agent, path):
+            return False, f"DISALLOWED for {agent}"
+    return True, "allowed"
+
+
 def crawl_contacts(site: str) -> tuple[list[dict], list[str]]:
     """Emails published on a company's site (same registrable domain only), with sources."""
-    import robots_check
     base = urllib.parse.urlsplit(site if "://" in site else f"https://{site}")
     root = f"{base.scheme or 'https'}://{base.netloc}"
     domain = registrable(base.netloc)
@@ -126,9 +163,9 @@ def crawl_contacts(site: str) -> tuple[list[dict], list[str]]:
         if url in visited:
             continue
         visited.add(url)
-        code, why = robots_check.gate(url)
-        if code != 0:
-            notes.append(f"skipped {url} ({why.split(' - ')[0]})")
+        ok, why = site_allows(url)
+        if not ok:
+            notes.append(f"skipped {url} ({why})")
             continue
         final, markup = _fetch(url)
         if not markup:

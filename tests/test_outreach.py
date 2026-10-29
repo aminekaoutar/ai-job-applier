@@ -49,8 +49,11 @@ class Crawl(unittest.TestCase):
         def fake_gate(url):
             return (1, "DISALLOWED for * - do not retry") if "recrutement" in url else (0, "ALLOWED")
 
-        import robots_check
-        with mock.patch.object(out, "_fetch", side_effect=fake_fetch), mock.patch.object(robots_check, "gate", side_effect=fake_gate):
+        def fake_allows(url):
+            code, why = fake_gate(url)
+            return code == 0, why
+
+        with mock.patch.object(out, "_fetch", side_effect=fake_fetch), mock.patch.object(out, "site_allows", side_effect=fake_allows):
             contacts, notes = out.crawl_contacts("https://www.acme.fr")
         emails = [c["email"] for c in contacts]
         self.assertEqual(emails[0], "recrutement@acme.fr")
@@ -65,6 +68,23 @@ class Crawl(unittest.TestCase):
         with mock.patch.object(out.urllib.request, "urlopen", return_value=resp):
             self.assertEqual(out.company_site_from_name("ALTEN")["url"], "https://alten.com")
             self.assertIsNone(out.company_site_from_name("Beezen"))
+
+
+class Robots(unittest.TestCase):
+    def test_one_robots_read_per_host_with_gate_rules(self):
+        import robots_check
+        out._ROBOTS.clear()
+        body = "User-agent: *\nDisallow: /private\n"
+        with mock.patch.object(robots_check, "_fetch", return_value=(body, 200)) as fetch:
+            self.assertTrue(out.site_allows("https://acme.fr/contact")[0])
+            self.assertFalse(out.site_allows("https://acme.fr/private/x")[0])
+            self.assertTrue(out.site_allows("https://acme.fr/recrutement")[0])
+        self.assertEqual(fetch.call_count, 1)
+        out._ROBOTS.clear()
+        with mock.patch.object(robots_check, "_fetch", return_value=("<html>blocked</html>", 403)):
+            self.assertFalse(out.site_allows("https://other.fr/")[0])  # unconfirmed is a no
+        with mock.patch.object(robots_check, "_fetch", return_value=("", 404)):
+            self.assertTrue(out.site_allows("https://third.fr/")[0])  # no policy published
 
 
 class Draft(unittest.TestCase):
