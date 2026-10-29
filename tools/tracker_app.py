@@ -24,6 +24,7 @@ Usage:
 """
 
 import argparse
+import base64
 import csv
 import hashlib
 import json
@@ -42,6 +43,8 @@ from urllib.parse import parse_qs, urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from rank_state import STATE, TRACKER, norm  # noqa: E402
+import job_finder  # noqa: E402
+import profile_store as ps  # noqa: E402
 
 PAGE = Path(__file__).resolve().parent / "tracker_app.html"
 
@@ -254,7 +257,7 @@ def read_opportunities(path: Path, applied_pairs: set) -> list[dict]:
     return scored + unscored
 
 
-def snapshot(tracker: Path, seen: Path, today: date, ghost_days: int) -> dict:
+def snapshot(tracker: Path, seen: Path, today: date, ghost_days: int, profile_dir: Path | None = None) -> dict:
     header, rows, version = read_tracker(tracker)
     apps = []
     for i, row in enumerate(rows):
@@ -268,8 +271,20 @@ def snapshot(tracker: Path, seen: Path, today: date, ghost_days: int) -> dict:
         "version": version,
         "tracker_exists": tracker.is_file(),
         "applications": apps,
-        "opportunities": read_opportunities(seen, pairs),
+        "opportunities": with_match(read_opportunities(seen, pairs), profile_dir),
     }
+
+
+def with_match(opps: list[dict], profile_dir: Path | None) -> list[dict]:
+    """Score each opportunity's title against the profile, best match first."""
+    profile = ps.load_profile(profile_dir) if profile_dir else None
+    if not profile or not ps.has_content(profile):
+        return opps
+    terms, targets = ps.profile_terms(profile), ps.target_words(profile)
+    for o in opps:
+        m = ps.match_job(terms, targets, o["title"])
+        o["match"], o["match_terms"] = m["score"], m["matched"]
+    return sorted(opps, key=lambda o: (-(o.get("match") or 0), -(o["score"] or 0)))
 
 
 # --- edits ---------------------------------------------------------------------
@@ -349,7 +364,50 @@ def apply_edit(tracker: Path, version: str, action: str, payload: dict, today: d
 
 # --- HTTP ------------------------------------------------------------------------
 
-def make_handler(tracker: Path, seen: Path, token: str, port_ref: dict, lock: threading.Lock):
+MAX_JSON = 64_000
+MAX_UPLOAD_JSON = 15 * 1024 * 1024  # base64 of a 10 MB CV
+UPLOAD_PATHS = {"/api/profile/import", "/api/profile/photo"}
+
+
+class SearchJob:
+    """The one profile search that may run at a time, polled by the page."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.state = {"running": False, "message": "", "result": None, "error": None}
+
+    def start(self, fn) -> bool:
+        with self.lock:
+            if self.state["running"]:
+                return False
+            self.state = {"running": True, "message": "Starting", "result": None, "error": None}
+
+        def progress(msg):
+            with self.lock:
+                self.state["message"] = msg
+
+        def work():
+            try:
+                result = fn(progress)
+                with self.lock:
+                    self.state.update(running=False, message="Done", result=result)
+            except Exception as exc:  # reported to the page, never swallowed
+                with self.lock:
+                    self.state.update(running=False, message="Failed", error=str(exc))
+
+        threading.Thread(target=work, daemon=True).start()
+        return True
+
+    def status(self) -> dict:
+        with self.lock:
+            return dict(self.state)
+
+
+def make_handler(tracker: Path, seen: Path, token: str, port_ref: dict, lock: threading.Lock,
+                 profile_dir: Path = ps.PROFILE_DIR):
+    search_job = SearchJob()
+    profile_lock = threading.Lock()
+
     class Handler(BaseHTTPRequestHandler):
         server_version = "tracker-app"
 
@@ -373,23 +431,49 @@ def make_handler(tracker: Path, seen: Path, token: str, port_ref: dict, lock: th
             self.wfile.write(body)
 
         def _json(self, code: int, obj) -> None:
-            self._send(code, json.dumps(obj).encode("utf-8"), "application/json; charset=utf-8")
+            self._send(code, json.dumps(obj, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
+
+        def _profile_payload(self) -> dict:
+            profile = ps.load_profile(profile_dir)
+            return {
+                "profile": profile,
+                "has_content": ps.has_content(profile),
+                "claude_available": ps.claude_path() is not None,
+                "bun_available": job_finder.find_bun() is not None,
+                "queries": ps.search_queries(profile) if ps.has_content(profile) else [],
+                "tailored": ps.list_tailored(profile_dir),
+            }
 
         def do_GET(self):
             if not self._host_ok():
                 return self._json(HTTPStatus.FORBIDDEN, {"error": "bad host"})
             url = urlsplit(self.path)
+            qs = parse_qs(url.query)
             if url.path == "/":
                 html = PAGE.read_text(encoding="utf-8").replace("__TRACKER_TOKEN__", token)
                 return self._send(HTTPStatus.OK, html.encode("utf-8"), "text/html; charset=utf-8")
             if url.path == "/api/data":
-                qs = parse_qs(url.query)
                 try:
                     ghost = int(qs.get("ghost_days", [DEFAULT_GHOST_DAYS])[0])
                 except ValueError:
                     ghost = DEFAULT_GHOST_DAYS
                 ghost = min(max(ghost, 1), 365)
-                return self._json(HTTPStatus.OK, snapshot(tracker, seen, date.today(), ghost))
+                return self._json(HTTPStatus.OK, snapshot(tracker, seen, date.today(), ghost, profile_dir))
+            if url.path == "/api/profile":
+                return self._json(HTTPStatus.OK, self._profile_payload())
+            if url.path == "/api/search/status":
+                return self._json(HTTPStatus.OK, search_job.status())
+            if url.path == "/profile/photo.png":
+                photo = profile_dir / "photo.png"
+                if not photo.is_file():
+                    return self._json(HTTPStatus.NOT_FOUND, {"error": "no photo"})
+                return self._send(HTTPStatus.OK, photo.read_bytes(), "image/png")
+            if url.path.startswith("/cv/"):
+                cv = ps.load_tailored(url.path[len("/cv/"):], profile_dir)
+                if cv is None:
+                    return self._json(HTTPStatus.NOT_FOUND, {"error": "no such CV"})
+                photo = "/profile/photo.png" if cv.get("photo") and (profile_dir / "photo.png").is_file() else None
+                return self._send(HTTPStatus.OK, ps.render_cv(cv, photo).encode("utf-8"), "text/html; charset=utf-8")
             return self._json(HTTPStatus.NOT_FOUND, {"error": "not found"})
 
         def do_POST(self):
@@ -399,36 +483,119 @@ def make_handler(tracker: Path, seen: Path, token: str, port_ref: dict, lock: th
             # preflight we never answer, and cannot read the token.
             if not secrets.compare_digest(self.headers.get("X-Tracker-Token", ""), token):
                 return self._json(HTTPStatus.FORBIDDEN, {"error": "bad token"})
-            if urlsplit(self.path).path != "/api/edit":
-                return self._json(HTTPStatus.NOT_FOUND, {"error": "not found"})
+            path = urlsplit(self.path).path
             try:
                 length = int(self.headers.get("Content-Length", "0"))
-                if length > 64_000:
+                if length > (MAX_UPLOAD_JSON if path in UPLOAD_PATHS else MAX_JSON):
                     raise ValueError("request too large")
                 body = json.loads(self.rfile.read(length) or b"{}")
                 if not isinstance(body, dict):
                     raise ValueError("expected a JSON object")
+                return self._route(path, body)
+            except Conflict as exc:
+                return self._json(HTTPStatus.CONFLICT, {"error": str(exc)})
+            except ps.ClaudeError as exc:
+                return self._json(HTTPStatus.BAD_GATEWAY, {"error": f"Claude: {exc}"})
+            except (ValueError, json.JSONDecodeError) as exc:
+                return self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+
+        def _route(self, path: str, body: dict):
+            if path == "/api/edit":
                 with lock:
                     version = apply_edit(tracker, str(body.get("version", "")), str(body.get("action", "")),
                                          body.get("payload") or {}, date.today())
                 return self._json(HTTPStatus.OK, {"ok": True, "version": version})
-            except Conflict as exc:
-                return self._json(HTTPStatus.CONFLICT, {"error": str(exc)})
-            except (ValueError, json.JSONDecodeError) as exc:
-                return self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+
+            if path == "/api/profile/save":
+                with profile_lock:
+                    current = ps.load_profile(profile_dir)
+                    incoming = body.get("profile") or {}
+                    incoming["photo"] = current["photo"]
+                    incoming["source"] = current["source"]
+                    ps.save_profile(incoming, profile_dir)
+                return self._json(HTTPStatus.OK, self._profile_payload())
+
+            if path == "/api/profile/import":
+                try:
+                    data = base64.b64decode(str(body.get("data") or ""), validate=True)
+                except ValueError as exc:
+                    raise ValueError("upload was not readable") from exc
+                method = "claude" if body.get("method") == "claude" else "local"
+                with profile_lock:
+                    result = ps.import_cv(str(body.get("filename") or "cv"), data, method, profile_dir)
+                return self._json(HTTPStatus.OK, {**self._profile_payload(), "warnings": result["warnings"]})
+
+            if path == "/api/profile/photo":
+                if body.get("remove"):
+                    with profile_lock:
+                        ps.remove_photo(profile_dir)
+                else:
+                    try:
+                        data = base64.b64decode(str(body.get("data") or ""), validate=True)
+                    except ValueError as exc:
+                        raise ValueError("upload was not readable") from exc
+                    with profile_lock:
+                        ps.set_photo(data, profile_dir)
+                return self._json(HTTPStatus.OK, self._profile_payload())
+
+            if path == "/api/job-text":
+                url = str(body.get("url") or "")
+                text = job_finder.fetch_posting(url)
+                return self._json(HTTPStatus.OK, {"text": text})
+
+            if path == "/api/cv/tailor":
+                profile = ps.load_profile(profile_dir)
+                if not ps.has_content(profile):
+                    raise ValueError("add your CV on the Profile tab first")
+                posting = str(body.get("posting") or "")
+                if len(posting.strip()) < 30:
+                    raise ValueError("paste the job description (or fetch it) first")
+                cv = ps.tailor(profile, posting, str(body.get("job_title") or ""), str(body.get("company") or ""),
+                               max_bullets=int(body.get("max_bullets") or 4), max_projects=int(body.get("max_projects") or 3),
+                               include_photo=bool(body.get("include_photo", True)))
+                if str(body.get("headline") or "").strip():
+                    cv["basics"]["headline"] = str(body["headline"]).strip()
+                if body.get("polish"):
+                    cv = ps.polish(cv, profile, int(body.get("max_bullets") or 4))
+                cv = ps.save_tailored(cv, profile_dir)
+                return self._json(HTTPStatus.OK, {"cv": {k: v for k, v in cv.items() if k != "posting"},
+                                                  "tailored": ps.list_tailored(profile_dir)})
+
+            if path == "/api/cv/delete":
+                cv_id = str(body.get("id") or "")
+                if ps.load_tailored(cv_id, profile_dir) is None:
+                    raise ValueError("no such CV")
+                (profile_dir / "tailored" / f"{cv_id}.json").unlink()
+                return self._json(HTTPStatus.OK, {"tailored": ps.list_tailored(profile_dir)})
+
+            if path == "/api/search/start":
+                profile = ps.load_profile(profile_dir)
+                if not ps.has_content(profile):
+                    raise ValueError("add your CV on the Profile tab first")
+                location = str(body.get("location") or "paris")
+                if location not in job_finder.LOCATIONS:
+                    raise ValueError("location must be paris, ile-de-france or france")
+                started = search_job.start(lambda progress: job_finder.profile_search(
+                    profile, seen, tracker, location, pages=2, progress=progress))
+                return self._json(HTTPStatus.OK if started else HTTPStatus.CONFLICT,
+                                  {"started": started, **search_job.status()})
+
+            return self._json(HTTPStatus.NOT_FOUND, {"error": "not found"})
 
     return Handler
 
 
-def serve(tracker: Path, seen: Path, port: int, open_browser: bool) -> None:
+def serve(tracker: Path, seen: Path, port: int, open_browser: bool, profile_dir: Path = ps.PROFILE_DIR) -> None:
     token = secrets.token_urlsafe(24)
     port_ref = {"port": port}
-    server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(tracker, seen, token, port_ref, threading.Lock()))
+    handler = make_handler(tracker, seen, token, port_ref, threading.Lock(), profile_dir)
+    server = ThreadingHTTPServer(("127.0.0.1", port), handler)
     port_ref["port"] = server.server_address[1]
     url = f"http://127.0.0.1:{port_ref['port']}/"
     print(f"Application tracker running at {url}  (Ctrl+C to stop)")
     print(f"  tracker: {tracker}")
     print(f"  scraped jobs: {seen}")
+    print(f"  profile: {profile_dir}")
     if open_browser:
         webbrowser.open(url)
     try:
@@ -444,9 +611,10 @@ def main(argv=None) -> int:
     p.add_argument("--port", type=int, default=8765)
     p.add_argument("--tracker", type=Path, default=TRACKER)
     p.add_argument("--seen", type=Path, default=STATE)
+    p.add_argument("--profile-dir", type=Path, default=ps.PROFILE_DIR)
     p.add_argument("--no-browser", action="store_true")
     args = p.parse_args(argv)
-    serve(args.tracker, args.seen, args.port, not args.no_browser)
+    serve(args.tracker, args.seen, args.port, not args.no_browser, args.profile_dir)
     return 0
 
 

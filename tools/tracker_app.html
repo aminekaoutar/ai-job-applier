@@ -60,6 +60,39 @@ form.add label { display: grid; gap: 3px; font-size: 12px; color: var(--muted); 
 .toast { position: fixed; bottom: 18px; right: 18px; background: var(--ink); color: var(--bg); padding: 10px 14px; border-radius: 8px; opacity: 0; transition: opacity .2s; pointer-events: none; max-width: 360px; }
 .toast.show { opacity: 1; }
 .hidden { display: none !important; }
+.chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.chip { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12px; border: 1px solid var(--line); background: var(--bg); }
+.chip.ok { border-color: color-mix(in srgb, var(--c-responded) 50%, transparent); color: var(--c-responded); }
+.chip.gap { border-color: color-mix(in srgb, #f59e0b 50%, transparent); color: #b45309; }
+.profile-grid { display: grid; grid-template-columns: minmax(260px, 320px) 1fr; gap: 12px; align-items: start; }
+@media (max-width: 900px) { .profile-grid { grid-template-columns: 1fr; } }
+.stack { display: grid; gap: 8px; }
+.stack label, .fields label { display: grid; gap: 3px; font-size: 12px; color: var(--muted); }
+.stack label.check { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+input[type=file] { max-width: 100%; }
+.stack, .builder > *, .profile-grid > * { min-width: 0; }
+.stack label:not(.check) > input, .stack label > select, .stack label > textarea,
+.fields label > input, .fields label > select { width: 100%; min-width: 0; }
+.stack > .btn { justify-self: start; }
+.fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
+textarea { width: 100%; min-height: 70px; resize: vertical; }
+.entry-card { border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin-bottom: 10px; background: var(--bg); }
+.entry-card .head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; }
+.entry-card .head b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.photo { width: 120px; height: 120px; border-radius: 50%; object-fit: cover; background: var(--bg); border: 1px solid var(--line); display: block; }
+.photo-empty { width: 120px; height: 120px; border-radius: 50%; border: 1px dashed var(--line); display: grid; place-items: center; color: var(--muted); font-size: 12px; text-align: center; }
+.drop { border: 2px dashed var(--line); border-radius: 10px; padding: 18px; text-align: center; }
+.drop.over { border-color: var(--accent); }
+.sec-title { display: flex; justify-content: space-between; align-items: center; margin: 4px 0 10px; }
+.busy { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); }
+.busy::before { content: ""; width: 14px; height: 14px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .busy::before { animation: none; } }
+.builder { display: grid; grid-template-columns: minmax(300px, 420px) 1fr; gap: 12px; align-items: start; }
+@media (max-width: 1000px) { .builder { grid-template-columns: 1fr; } }
+iframe.cv { width: 100%; height: 1100px; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
+.match { display: inline-block; min-width: 44px; padding: 2px 7px; border-radius: 6px; font-weight: 700; font-size: 12px; color: #fff; text-align: center; }
+.warn { background: color-mix(in srgb, #f59e0b 14%, var(--panel)); border: 1px solid color-mix(in srgb, #f59e0b 40%, transparent); padding: 8px 12px; border-radius: 8px; margin: 8px 0; }
 .ghost-ctl { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
 .ghost-ctl input { width: 64px; }
 @media (max-width: 640px) { header, main { padding-left: 16px; padding-right: 16px; } }
@@ -73,6 +106,8 @@ form.add label { display: grid; gap: 3px; font-size: 12px; color: var(--muted); 
     <button role="tab" data-tab="applications" aria-selected="false">Applications</button>
     <button role="tab" data-tab="followups" aria-selected="false">Follow-ups<span id="fu-count" class="badge-count hidden"></span></button>
     <button role="tab" data-tab="opportunities" aria-selected="false">Opportunities</button>
+    <button role="tab" data-tab="profile" aria-selected="false">Profile</button>
+    <button role="tab" data-tab="builder" aria-selected="false">CV builder</button>
   </nav>
   <label class="ghost-ctl" title="An application with no reply for this many days counts as ghosted">
     Ghosted after <input id="ghost-days" type="number" min="1" max="365"> days
@@ -136,8 +171,12 @@ form.add label { display: grid; gap: 3px; font-size: 12px; color: var(--muted); 
 
   <section id="tab-opportunities" class="hidden">
     <div class="panel">
-      <h2>Found but not applied yet</h2>
-      <p class="muted">Jobs from <code>/scrape</code>, scored by <code>/rank</code>. Use <code>/apply</code> in Claude Code to draft the CV and cover letter, then mark it applied here.</p>
+      <div class="sec-title"><h2 style="margin:0">Found but not applied yet</h2>
+        <span class="toolbar" style="margin:0">
+          <select id="search-loc" aria-label="Search area"><option value="paris">Paris</option><option value="ile-de-france">Île-de-France</option><option value="france">All France</option></select>
+          <button class="btn primary" id="search-btn">Find jobs for my profile</button>
+        </span></div>
+      <p class="muted" id="search-status">Jobs from <code>/scrape</code> and from "Find jobs for my profile". <b>Match</b> compares each title with your profile; "Tailor CV" builds a CV for that job.</p>
       <div class="toolbar">
         <input id="oq" type="search" placeholder="Search…" style="flex:1;min-width:200px">
         <select id="of-portal"><option value="">All sites</option></select>
@@ -145,6 +184,96 @@ form.add label { display: grid; gap: 3px; font-size: 12px; color: var(--muted); 
         <span class="muted" id="opp-count"></span>
       </div>
       <div class="table-wrap"><table id="opp-table"></table></div>
+    </div>
+  </section>
+  <section id="tab-profile" class="hidden">
+    <div class="profile-grid">
+      <div class="stack">
+        <div class="panel">
+          <h2>Import your CV</h2>
+          <div class="drop" id="drop">
+            <p style="margin:0 0 8px">Drop a PDF or DOCX here, or</p>
+            <input type="file" id="cv-file" accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document">
+          </div>
+          <div class="stack" style="margin-top:10px">
+            <label class="check"><input type="radio" name="method" value="claude" checked> Extract with Claude (most accurate)</label>
+            <label class="check"><input type="radio" name="method" value="local"> Local only (nothing leaves this computer)</label>
+          </div>
+          <p class="muted" id="import-status" style="margin-bottom:0"></p>
+        </div>
+        <div class="panel">
+          <h2>Photo</h2>
+          <div id="photo-box"></div>
+          <div class="toolbar" style="margin-top:10px">
+            <button class="btn small" id="photo-pick">Upload photo</button>
+            <input type="file" id="photo-file" accept="image/*" class="hidden">
+            <button class="btn small" id="photo-remove">Remove</button>
+          </div>
+        </div>
+        <div class="panel">
+          <h2>Contact</h2>
+          <div class="stack" id="basics"></div>
+        </div>
+      </div>
+      <div class="stack">
+        <div class="panel">
+          <div class="sec-title"><h2 style="margin:0">Profile</h2>
+            <span><span class="muted" id="dirty"></span> <button class="btn primary" id="save-profile">Save profile</button></span></div>
+          <div id="profile-warn"></div>
+          <label class="muted" style="display:grid;gap:3px">Summary<textarea id="summary" rows="3"></textarea></label>
+        </div>
+        <div class="panel"><div id="sec-experience"></div></div>
+        <div class="panel"><div id="sec-projects"></div></div>
+        <div class="panel"><div id="sec-education"></div></div>
+        <div class="panel">
+          <h2>Skills, languages, certifications</h2>
+          <div class="fields" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr))">
+            <label>Skills (one per line)<textarea id="skills" rows="8"></textarea></label>
+            <label>Languages ("French - native", one per line)<textarea id="languages" rows="8"></textarea></label>
+            <label>Certifications ("Name - issuer - date", one per line)<textarea id="certs" rows="8"></textarea></label>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="tab-builder" class="hidden">
+    <div class="builder">
+      <div class="stack">
+        <div class="panel">
+          <h2>Target job</h2>
+          <div class="stack">
+            <label>Pick a found job (best matches first)<select id="b-opp"><option value="">— or paste a description below —</option></select></label>
+            <div class="fields">
+              <label>Job title<input id="b-title"></label>
+              <label>Company<input id="b-company"></label>
+            </div>
+            <label>Job description <span id="b-fetch-status"></span><textarea id="b-posting" rows="12" placeholder="Paste the full job description here"></textarea></label>
+            <button class="btn" id="b-fetch">Fetch the description of the picked job</button>
+          </div>
+        </div>
+        <div class="panel">
+          <h2>Options</h2>
+          <div class="stack">
+            <label>Headline on the CV<input id="b-headline" placeholder="Your own headline"></label>
+            <div class="fields">
+              <label>Bullets per role<select id="b-bullets"><option>2</option><option>3</option><option selected>4</option><option>5</option><option>6</option></select></label>
+              <label>Projects shown<select id="b-projects"><option>0</option><option>1</option><option>2</option><option selected>3</option><option>4</option><option>5</option></select></label>
+            </div>
+            <label class="check"><input type="checkbox" id="b-photo" checked> Include photo (usual in France)</label>
+            <label class="check"><input type="checkbox" id="b-polish"> Polish wording with Claude (rephrases your own facts only)</label>
+            <button class="btn primary" id="b-build">Build tailored CV</button>
+            <span id="b-status" class="muted"></span>
+          </div>
+        </div>
+        <div class="panel">
+          <h2>Saved CVs</h2>
+          <div id="b-saved"></div>
+        </div>
+      </div>
+      <div class="stack">
+        <div class="panel" id="b-result"><div class="empty">Pick or paste a job, then "Build tailored CV". Your profile's experiences, bullets, projects and skills are ranked against the posting; nothing is invented.</div></div>
+      </div>
     </div>
   </section>
 </main>
@@ -349,7 +478,7 @@ function render() {
   const st = document.querySelector("#add-form select[name=status]");
   if (!st.options.length) { st.innerHTML = DATA.statuses.map(s => `<option value="${esc(s)}"${s === "applied" ? " selected" : ""}>${esc(label(s))}</option>`).join(""); }
 
-  renderApps(); renderFollowups(); renderOpps();
+  renderApps(); renderFollowups(); renderOpps(); fillBuilderJobs();
 }
 
 const sum = (o) => Object.values(o).reduce((s, v) => s + v, 0);
@@ -407,13 +536,14 @@ function renderOpps() {
   $("#opp-count").textContent = `${rows.length} of ${DATA.opportunities.length} jobs`;
   const t = $("#opp-table");
   if (!rows.length) { t.innerHTML = `<tr><td class="empty">${DATA.opportunities.length ? "No match." : "No open opportunities. Run /scrape then /rank in Claude Code."}</td></tr>`; return; }
-  t.innerHTML = `<thead><tr><th>Score / fit</th><th>Job</th><th>Location</th><th>Site</th><th>Posted</th><th>Deadline</th><th></th></tr></thead><tbody>` +
+  const hasMatch = DATA.opportunities.some(o => o.match != null);
+  t.innerHTML = `<thead><tr>${hasMatch ? "<th>Match</th>" : ""}<th>Score / fit</th><th>Job</th><th>Location</th><th>Site</th><th>Posted</th><th>Deadline</th><th></th></tr></thead><tbody>` +
     rows.map((o, i) => {
       const url = safeUrl(o.url);
-      return `<tr data-o="${DATA.opportunities.indexOf(o)}"><td>${o.score == null ? `<span class="muted">${o.fit ? esc(o.fit) + " fit" : "unscored"}</span>` : `<b>${esc(o.score)}</b><br><span class="muted">${esc(o.verdict)}</span>`}</td>
+      return `<tr data-o="${DATA.opportunities.indexOf(o)}">${hasMatch ? `<td>${matchBadge(o)}</td>` : ""}<td>${o.score == null ? `<span class="muted">${o.fit ? esc(o.fit) + " fit" : "unscored"}</span>` : `<b>${esc(o.score)}</b><br><span class="muted">${esc(o.verdict)}</span>`}</td>
       <td><b>${esc(o.company)}</b><br>${url ? `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(o.title)}</a>` : esc(o.title)}</td>
       <td>${esc(o.location || "—")}</td><td style="white-space:nowrap">${esc(o.portal)}</td><td style="white-space:nowrap">${esc(o.posted_date || o.first_seen || "—")}</td><td>${esc(o.deadline || "—")}</td>
-      <td><button class="btn small applied">Mark applied</button></td></tr>`;
+      <td style="white-space:nowrap"><button class="btn small tailor">Tailor CV</button> <button class="btn small applied">Mark applied</button></td></tr>`;
     }).join("") + "</tbody>";
 }
 
@@ -451,8 +581,10 @@ $("#apps-table").addEventListener("click", rowAction);
 $("#fu-table").addEventListener("click", rowAction);
 
 $("#opp-table").addEventListener("click", async (e) => {
+  const tr = e.target.closest("tr[data-o]"); if (!tr) return;
+  const o = DATA.opportunities[Number(tr.dataset.o)];
+  if (e.target.classList.contains("tailor")) { openBuilderFor(o); return; }
   if (!e.target.classList.contains("applied")) return;
-  const o = DATA.opportunities[Number(e.target.closest("tr").dataset.o)];
   if (await edit("add", { company: o.company, role: o.title, status: "applied", channel: o.portal, source: o.url, deadline: o.deadline })) toast(`Added ${o.company} to applications`);
 });
 
@@ -462,13 +594,293 @@ $("#add-form").addEventListener("submit", async (e) => {
   if (await edit("add", payload)) { e.target.reset(); toast("Application added"); }
 });
 
+// ---------- profile ----------
+let PROF = null;        // /api/profile payload
+let P = null;           // the profile being edited
+let dirty = false;
+
+async function api(path, body) {
+  const r = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Tracker-Token": TOKEN },
+    body: JSON.stringify(body || {}),
+  });
+  const out = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(out.error || `Request failed (${r.status})`);
+  return out;
+}
+
+function matchBadge(o) {
+  if (o.match == null) return "—";
+  const c = o.match >= 60 ? cssVar("--c-responded") : o.match >= 30 ? "#d97706" : cssVar("--c-ghosted");
+  const tip = o.match_terms && o.match_terms.length ? `Matches your profile on: ${o.match_terms.join(", ")}` : "Matched on role words only";
+  return `<span class="match" style="background:${c}" title="${esc(tip)}">${esc(o.match)}%</span>`;
+}
+
+const SECTIONS = {
+  experience: {
+    title: "Experience", add: "+ Add experience",
+    head: (x) => [x.title, x.company].filter(Boolean).join(" — ") || "New experience",
+    fields: [["title", "Job title"], ["company", "Company"], ["location", "Location"], ["start", "Start"], ["end", "End (or Present)"]],
+    lists: [["bullets", "What you did / achieved (one per line)"], ["skills", "Technologies used (one per line)"]],
+  },
+  projects: {
+    title: "Projects", add: "+ Add project",
+    head: (x) => [x.name, x.role].filter(Boolean).join(" — ") || "New project",
+    fields: [["name", "Project name"], ["role", "Context (personal, school, open source…)"], ["start", "Start"], ["end", "End"], ["url", "Link"]],
+    lists: [["bullets", "What you built / achieved (one per line)"], ["skills", "Technologies used (one per line)"]],
+  },
+  education: {
+    title: "Education", add: "+ Add education",
+    head: (x) => [x.degree, x.school].filter(Boolean).join(" — ") || "New education",
+    fields: [["degree", "Degree"], ["school", "School"], ["location", "Location"], ["start", "Start"], ["end", "End"]],
+    lists: [["details", "Details: thesis, courses, honours (one per line)"]],
+  },
+};
+const BASICS = [["name", "Full name"], ["headline", "Headline (e.g. Ingénieur IA / LLM)"], ["email", "Email"], ["phone", "Phone"],
+  ["location", "City"], ["linkedin", "LinkedIn"], ["github", "GitHub"], ["website", "Website"]];
+
+async function loadProfile() {
+  const r = await fetch("/api/profile");
+  PROF = await r.json();
+  P = JSON.parse(JSON.stringify(PROF.profile));
+  dirty = false;
+  renderProfile();
+  renderSaved();
+  fillBuilderJobs();
+  $("#b-polish").disabled = !PROF.claude_available;
+  if (!PROF.claude_available) {
+    document.querySelector('input[name=method][value=local]').checked = true;
+    document.querySelector('input[name=method][value=claude]').disabled = true;
+  }
+}
+
+function markDirty() { dirty = true; $("#dirty").textContent = "Unsaved changes"; }
+
+function renderProfile() {
+  $("#dirty").textContent = dirty ? "Unsaved changes" : "";
+  const src = P.source;
+  $("#profile-warn").innerHTML = PROF.has_content ? (src ? `<p class="muted" style="margin-top:0">Imported from <b>${esc(src.file)}</b> (${esc(src.method === "claude" ? "Claude" : "local parser")}). Check every entry, then save.</p>` : "")
+    : `<div class="warn">No profile yet: import your CV on the left, or fill the sections in by hand.</div>`;
+  $("#basics").innerHTML = BASICS.map(([k, l]) => `<label>${esc(l)}<input data-basic="${k}" value="${esc(P.basics[k] || "")}"></label>`).join("");
+  $("#summary").value = P.basics.summary || "";
+  $("#skills").value = (P.skills || []).join("\n");
+  $("#languages").value = (P.languages || []).map(l => l.level ? `${l.language} - ${l.level}` : l.language).join("\n");
+  $("#certs").value = (P.certifications || []).map(c => [c.name, c.issuer, c.date].filter(Boolean).join(" - ")).join("\n");
+  for (const sec of Object.keys(SECTIONS)) renderSection(sec);
+  $("#photo-box").innerHTML = P.photo ? `<img class="photo" alt="Your photo" src="/profile/photo.png?t=${Date.now()}">` : `<div class="photo-empty">No photo</div>`;
+  $("#photo-remove").disabled = !P.photo;
+}
+
+function renderSection(sec) {
+  const cfg = SECTIONS[sec], items = P[sec] || [];
+  $(`#sec-${sec}`).innerHTML = `<div class="sec-title"><h2 style="margin:0">${esc(cfg.title)} <span class="muted">(${items.length})</span></h2><button class="btn small" data-add="${sec}">${esc(cfg.add)}</button></div>` +
+    (items.length ? "" : `<div class="empty" style="padding:14px">Nothing yet.</div>`) +
+    items.map((x, i) => `<div class="entry-card" data-sec="${sec}" data-i="${i}">
+      <div class="head"><b>${esc(cfg.head(x))}</b><span style="white-space:nowrap">
+        <button class="btn small" data-move="-1" ${i === 0 ? "disabled" : ""} aria-label="Move up">↑</button>
+        <button class="btn small" data-move="1" ${i === items.length - 1 ? "disabled" : ""} aria-label="Move down">↓</button>
+        <button class="btn small" data-del="1">Delete</button></span></div>
+      <div class="fields">${cfg.fields.map(([k, l]) => `<label>${esc(l)}<input data-f="${k}" value="${esc(x[k] || "")}"></label>`).join("")}</div>
+      ${cfg.lists.map(([k, l]) => `<label class="muted" style="display:grid;gap:3px;margin-top:8px">${esc(l)}<textarea data-l="${k}" rows="${k === "skills" ? 2 : 4}">${esc((x[k] || []).join("\n"))}</textarea></label>`).join("")}
+    </div>`).join("");
+}
+
+const lines = (v) => v.split("\n").map(s => s.trim()).filter(Boolean);
+
+$("#tab-profile").addEventListener("input", (e) => {
+  const el = e.target;
+  if (el.dataset.basic) P.basics[el.dataset.basic] = el.value;
+  else if (el.id === "summary") P.basics.summary = el.value;
+  else if (el.id === "skills") P.skills = lines(el.value);
+  else if (el.id === "languages") P.languages = lines(el.value).map(l => { const [a, ...b] = l.split(/\s+-\s+|\s*:\s*/); return { language: a, level: b.join(" - ") }; });
+  else if (el.id === "certs") P.certifications = lines(el.value).map(l => { const [name, issuer = "", d = ""] = l.split(/\s+-\s+/); return { name, issuer, date: d }; });
+  else {
+    const card = el.closest(".entry-card"); if (!card) return;
+    const item = P[card.dataset.sec][Number(card.dataset.i)];
+    if (el.dataset.f) { item[el.dataset.f] = el.value; card.querySelector(".head b").textContent = SECTIONS[card.dataset.sec].head(item); }
+    if (el.dataset.l) item[el.dataset.l] = lines(el.value);
+  }
+  markDirty();
+});
+
+$("#tab-profile").addEventListener("click", (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  if (b.dataset.add) {
+    const sec = b.dataset.add;
+    const blank = Object.fromEntries([...SECTIONS[sec].fields.map(([k]) => [k, ""]), ...SECTIONS[sec].lists.map(([k]) => [k, []])]);
+    P[sec].unshift(blank); renderSection(sec); markDirty();
+    document.querySelector(`#sec-${sec} .entry-card input`)?.focus();
+    return;
+  }
+  const card = b.closest(".entry-card"); if (!card) return;
+  const sec = card.dataset.sec, i = Number(card.dataset.i), arr = P[sec];
+  if (b.dataset.del) { if (!confirm("Delete this entry?")) return; arr.splice(i, 1); }
+  if (b.dataset.move) { const j = i + Number(b.dataset.move); [arr[i], arr[j]] = [arr[j], arr[i]]; }
+  renderSection(sec); markDirty();
+});
+
+$("#save-profile").addEventListener("click", async () => {
+  try {
+    PROF = await api("/api/profile/save", { profile: P });
+    P = JSON.parse(JSON.stringify(PROF.profile)); dirty = false;
+    renderProfile(); toast("Profile saved"); load();
+  } catch (err) { toast(err.message); }
+});
+window.addEventListener("beforeunload", (e) => { if (dirty) { e.preventDefault(); e.returnValue = ""; } });
+
+function readFile(file) {
+  return new Promise((ok, bad) => {
+    const r = new FileReader();
+    r.onload = () => ok(String(r.result).split(",", 2)[1] || "");
+    r.onerror = () => bad(new Error("could not read the file"));
+    r.readAsDataURL(file);
+  });
+}
+
+async function importCv(file) {
+  if (!file) return;
+  if (!/\.(pdf|docx)$/i.test(file.name)) { toast("Upload a PDF or DOCX file"); return; }
+  if (PROF.has_content && !confirm("Replace your current profile with this CV? (Your edits are overwritten.)")) return;
+  const method = document.querySelector("input[name=method]:checked").value;
+  const st = $("#import-status");
+  st.innerHTML = `<span class="busy">${method === "claude" ? "Claude is reading your CV - this can take a minute…" : "Reading your CV…"}</span>`;
+  try {
+    const out = await api("/api/profile/import", { filename: file.name, data: await readFile(file), method });
+    PROF = out; P = JSON.parse(JSON.stringify(out.profile)); dirty = false;
+    renderProfile(); renderSaved(); load();
+    const n = (k) => P[k].length;
+    st.innerHTML = `Imported ${n("experience")} experiences, ${n("projects")} projects, ${n("education")} education entries, ${P.skills.length} skills${P.photo ? " and your photo" : ""}.` +
+      (out.warnings || []).map(w => `<div class="warn">${esc(w)}</div>`).join("");
+  } catch (err) { st.textContent = ""; toast(err.message); }
+}
+$("#cv-file").addEventListener("change", (e) => { importCv(e.target.files[0]); e.target.value = ""; });
+const drop = $("#drop");
+["dragenter", "dragover"].forEach(ev => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add("over"); }));
+["dragleave", "drop"].forEach(ev => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove("over"); }));
+drop.addEventListener("drop", (e) => importCv(e.dataTransfer.files[0]));
+
+$("#photo-pick").addEventListener("click", () => $("#photo-file").click());
+$("#photo-file").addEventListener("change", async (e) => {
+  const f = e.target.files[0]; e.target.value = ""; if (!f) return;
+  try { PROF = await api("/api/profile/photo", { data: await readFile(f) }); P.photo = PROF.profile.photo; renderProfile(); toast("Photo updated"); }
+  catch (err) { toast(err.message); }
+});
+$("#photo-remove").addEventListener("click", async () => {
+  try { PROF = await api("/api/profile/photo", { remove: true }); P.photo = null; renderProfile(); toast("Photo removed"); }
+  catch (err) { toast(err.message); }
+});
+
+// ---------- profile job search ----------
+async function pollSearch() {
+  const st = await (await fetch("/api/search/status")).json();
+  const el = $("#search-status"), btn = $("#search-btn");
+  if (st.running) {
+    btn.disabled = true;
+    el.innerHTML = `<span class="busy">${esc(st.message)}</span>`;
+    setTimeout(pollSearch, 2000);
+    return;
+  }
+  btn.disabled = false;
+  if (st.error) { el.innerHTML = `<span class="warn">Search failed: ${esc(st.error)}</span>`; return; }
+  if (st.result) {
+    const r = st.result;
+    el.innerHTML = `Searched ${r.queries.length} profile keywords (${r.queries.map(esc).join(", ")}): ${r.found} results, <b>${r.added} new jobs</b> (${r.relevant} relevant), ${r.already_known} already known.` +
+      (r.linkedin ? "" : ` <span class="muted">LinkedIn skipped - install bun to include it.</span>`) +
+      (r.errors.length ? `<div class="warn">${r.errors.map(esc).join("<br>")}</div>` : "");
+    load();
+  }
+}
+$("#search-btn").addEventListener("click", async () => {
+  if (!PROF || !PROF.has_content) { toast("Import your CV on the Profile tab first"); showTab("profile"); return; }
+  try { await api("/api/search/start", { location: $("#search-loc").value }); pollSearch(); }
+  catch (err) { toast(err.message); }
+});
+
+// ---------- CV builder ----------
+function fillBuilderJobs() {
+  if (!DATA) return;
+  const sel = $("#b-opp"), cur = sel.value;
+  const top = DATA.opportunities.slice(0, 150);
+  sel.innerHTML = `<option value="">— or paste a description below —</option>` + top.map(o =>
+    `<option value="${esc(o.key)}">${o.match != null ? `${esc(o.match)}% · ` : ""}${esc(o.company)} — ${esc(o.title)}</option>`).join("");
+  sel.value = top.some(o => o.key === cur) ? cur : "";
+}
+
+function oppByKey(k) { return DATA.opportunities.find(o => o.key === k); }
+
+async function fetchPosting(o) {
+  const st = $("#b-fetch-status");
+  if (!o || !o.url) { toast("Pick a job first"); return; }
+  st.innerHTML = `<span class="busy">fetching…</span>`;
+  try {
+    const out = await api("/api/job-text", { url: o.url });
+    if (out.text) { $("#b-posting").value = out.text; st.textContent = "(fetched)"; }
+    else { st.innerHTML = `<span class="muted">(could not fetch this site - <a href="${esc(safeUrl(o.url))}" target="_blank" rel="noopener noreferrer">open the posting</a> and paste it)</span>`; }
+  } catch (err) { st.textContent = ""; toast(err.message); }
+}
+
+function openBuilderFor(o) {
+  showTab("builder");
+  $("#b-opp").value = o.key;
+  $("#b-title").value = o.title; $("#b-company").value = o.company; $("#b-posting").value = "";
+  fetchPosting(o);
+}
+$("#b-opp").addEventListener("change", () => {
+  const o = oppByKey($("#b-opp").value); if (!o) return;
+  $("#b-title").value = o.title; $("#b-company").value = o.company; $("#b-posting").value = "";
+  fetchPosting(o);
+});
+$("#b-fetch").addEventListener("click", () => fetchPosting(oppByKey($("#b-opp").value)));
+
+function renderSaved() {
+  const list = (PROF && PROF.tailored) || [];
+  $("#b-saved").innerHTML = list.length ? `<table>${list.map(c => `<tr data-cv="${esc(c.id)}"><td><b>${esc(c.company || "—")}</b><br><span class="muted">${esc(c.job_title || "")}</span></td>
+    <td class="muted" style="white-space:nowrap">${esc(c.created)}${c.coverage != null ? `<br>${esc(c.coverage)}% match` : ""}</td>
+    <td style="white-space:nowrap"><a class="btn small" href="/cv/${encodeURIComponent(c.id)}" target="_blank" rel="noopener">Open</a> <button class="btn small del-cv">Delete</button></td></tr>`).join("")}</table>`
+    : `<div class="empty" style="padding:14px">No tailored CVs yet.</div>`;
+}
+$("#b-saved").addEventListener("click", async (e) => {
+  if (!e.target.classList.contains("del-cv")) return;
+  const id = e.target.closest("tr").dataset.cv;
+  if (!confirm("Delete this tailored CV?")) return;
+  try { const out = await api("/api/cv/delete", { id }); PROF.tailored = out.tailored; renderSaved(); } catch (err) { toast(err.message); }
+});
+
+$("#b-build").addEventListener("click", async () => {
+  if (!PROF || !PROF.has_content) { toast("Import your CV on the Profile tab first"); showTab("profile"); return; }
+  if (dirty) { toast("Save your profile changes first"); showTab("profile"); return; }
+  const polish = $("#b-polish").checked;
+  $("#b-status").innerHTML = `<span class="busy">${polish ? "Tailoring and polishing with Claude - up to a minute…" : "Tailoring…"}</span>`;
+  $("#b-build").disabled = true;
+  try {
+    const out = await api("/api/cv/tailor", {
+      posting: $("#b-posting").value, job_title: $("#b-title").value, company: $("#b-company").value,
+      headline: $("#b-headline").value, max_bullets: Number($("#b-bullets").value), max_projects: Number($("#b-projects").value),
+      include_photo: $("#b-photo").checked, polish,
+    });
+    PROF.tailored = out.tailored; renderSaved();
+    const cv = out.cv;
+    $("#b-result").innerHTML = `<div class="sec-title"><h2 style="margin:0">${esc(cv.company || "Tailored CV")} — ${esc(cv.job_title || "")}</h2>
+        <a class="btn primary" href="/cv/${encodeURIComponent(cv.id)}" target="_blank" rel="noopener">Open &amp; print to PDF</a></div>
+      <p class="muted" style="margin-top:0">${cv.coverage != null ? `<b>${esc(cv.matched.length)} of ${esc(cv.terms_total)}</b> skills the posting names are in your profile (${esc(cv.coverage)}%). ` : "No known skills detected in this posting. "}Language: ${esc(cv.language)}${cv.polished ? " · wording polished by Claude" : ""}. Use your browser's Print → Save as PDF.</p>
+      <h3>In your profile</h3><div class="chips">${cv.matched.map(t => `<span class="chip ok">${esc(t)}</span>`).join("") || `<span class="muted">none detected</span>`}</div>
+      <h3 style="margin-top:12px">Asked for, not in your profile</h3><div class="chips">${cv.missing.map(t => `<span class="chip gap">${esc(t)}</span>`).join("") || `<span class="muted">nothing - full coverage</span>`}</div>
+      <p class="muted">If you really have one of these, add it to your profile and rebuild. Never add what you don't have.</p>
+      <iframe class="cv" title="Tailored CV preview" src="/cv/${encodeURIComponent(cv.id)}"></iframe>`;
+    $("#b-status").textContent = "";
+  } catch (err) { $("#b-status").textContent = ""; toast(err.message); }
+  finally { $("#b-build").disabled = false; }
+});
+
 $("#ghost-days").value = store("tracker.ghost") || 21;
-const TABS = ["dashboard", "applications", "followups", "opportunities"];
+const TABS = ["dashboard", "applications", "followups", "opportunities", "profile", "builder"];
 const fromHash = () => TABS.includes(location.hash.slice(1)) ? location.hash.slice(1) : null;
 window.addEventListener("hashchange", () => fromHash() && showTab(fromHash()));
 showTab(fromHash() || store("tracker.tab") || "dashboard");
 window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => DATA && render());
 load().catch(() => toast("Could not reach the tracker server - is it still running?"));
+loadProfile().catch(() => {});
 setInterval(() => { if (document.visibilityState === "visible") load().catch(() => {}); }, 30000);
 </script>
 </body>
