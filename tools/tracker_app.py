@@ -46,6 +46,7 @@ from rank_state import STATE, TRACKER, norm  # noqa: E402
 import github_import  # noqa: E402
 import job_finder  # noqa: E402
 import outreach  # noqa: E402
+import batch  # noqa: E402
 import profile_store as ps  # noqa: E402
 
 PAGE = Path(__file__).resolve().parent / "tracker_app.html"
@@ -416,6 +417,7 @@ class SearchJob:
 def make_handler(tracker: Path, seen: Path, token: str, port_ref: dict, lock: threading.Lock,
                  profile_dir: Path = ps.PROFILE_DIR):
     search_job = SearchJob()
+    batch_job = SearchJob()
     profile_lock = threading.Lock()
     github_cache = {}  # username -> repos fetched by /api/github/repos
 
@@ -426,6 +428,18 @@ def make_handler(tracker: Path, seen: Path, token: str, port_ref: dict, lock: th
             if o["key"] == key:
                 return o
         raise ValueError("that job is no longer in the opportunities list")
+
+    def send_list(full: bool = False) -> list[dict]:
+        records = batch.Store(profile_dir).all()
+        rows = []
+        for r in records.values():
+            if not r.get("cv_id"):
+                continue
+            row = {k: r.get(k) for k in ("key", "company", "title", "url", "portal", "match", "cv_id", "coverage",
+                                         "from_title", "pdf", "contacts", "site", "site_note", "draft", "sent", "prepared")}
+            rows.append(row)
+        rows.sort(key=lambda r: (not r.get("contacts"), -(r.get("match") or 0)))
+        return rows
 
     def outreach_path(key: str) -> Path:
         safe = re.sub(r"[^a-z0-9_-]", "-", key.lower())[:120] or "job"
@@ -509,6 +523,35 @@ def make_handler(tracker: Path, seen: Path, token: str, port_ref: dict, lock: th
                 return self._json(HTTPStatus.OK, self._profile_payload())
             if url.path == "/api/search/status":
                 return self._json(HTTPStatus.OK, search_job.status())
+            if url.path == "/api/batch/status":
+                return self._json(HTTPStatus.OK, batch_job.status())
+            if url.path == "/api/sendlist":
+                return self._json(HTTPStatus.OK, {"rows": send_list()})
+            if url.path == "/api/sendlist.csv":
+                import csv as _csv, io as _io
+                buf = _io.StringIO()
+                w = _csv.writer(buf)
+                w.writerow(["match", "company", "job", "email", "email_kind", "email_source", "cv_pdf", "posting", "subject", "body", "sent"])
+                for r in send_list(full=True):
+                    c = (r.get("contacts") or [{}])[0]
+                    d = r.get("draft") or {}
+                    w.writerow([r.get("match"), r.get("company"), r.get("title"), c.get("email", ""), c.get("kind", ""),
+                                c.get("source", ""), str(profile_dir / r["pdf"]) if r.get("pdf") else "", r.get("url"),
+                                d.get("subject", ""), d.get("body", ""), (r.get("sent") or {}).get("on", "")])
+                self.send_response(HTTPStatus.OK)
+                data = buf.getvalue().encode("utf-8-sig")
+                self.send_header("Content-Type", "text/csv; charset=utf-8")
+                self.send_header("Content-Disposition", 'attachment; filename="send-list.csv"')
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+                return
+            if url.path.startswith("/cv/") and url.path.endswith(".pdf"):
+                cv_id = url.path[len("/cv/"):-len(".pdf")]
+                pdf = profile_dir / "tailored" / f"{cv_id}.pdf"
+                if not re.fullmatch(r"[a-z0-9-]+", cv_id) or not pdf.is_file():
+                    return self._json(HTTPStatus.NOT_FOUND, {"error": "no PDF for this CV yet"})
+                return self._send(HTTPStatus.OK, pdf.read_bytes(), "application/pdf")
             if url.path == "/profile/photo.png":
                 photo = profile_dir / "photo.png"
                 if not photo.is_file():
@@ -614,9 +657,29 @@ def make_handler(tracker: Path, seen: Path, token: str, port_ref: dict, lock: th
                     # still build from the title so the button never dead-ends, and say so.
                     posting = f"{opp['title']}\n{opp['company']}"
                 cv = build_cv(profile, posting, body, opp)
+                pdf = batch.render_pdf(cv, profile_dir)
+                record = load_outreach(opp["key"])
+                record.update(key=opp["key"], company=opp["company"], title=opp["title"], url=opp["url"],
+                              portal=opp["portal"], match=opp.get("match"), cv_id=cv["id"], coverage=cv.get("coverage"),
+                              from_title=from_title, pdf=f"tailored/{cv['id']}.pdf" if pdf else None)
+                if not from_title:
+                    record["posting"] = posting[:20000]
+                save_outreach(opp["key"], record)
                 return self._json(HTTPStatus.OK, {"cv": {k: v for k, v in cv.items() if k != "posting"},
                                                   "posting": "" if from_title else posting, "from_title": from_title,
-                                                  "tailored": ps.list_tailored(profile_dir)})
+                                                  "pdf": bool(pdf), "tailored": ps.list_tailored(profile_dir)})
+
+            if path == "/api/batch/start":
+                _, rows, _ = read_tracker(tracker)
+                pairs = {(norm(r.get("company")), norm(r.get("role"))) for r in rows if norm(r.get("company"))}
+                opps = with_match(read_opportunities(seen, pairs), profile_dir)
+                min_match = int(body.get("min_match") or 0)
+                opps = [o for o in opps if (o.get("match") or 0) >= min_match]
+                started = batch_job.start(lambda progress: batch.prepare_all(
+                    opps, profile_dir, progress, force=bool(body.get("force")),
+                    polish_top=int(body.get("polish_top") or 0), drafts=bool(body.get("drafts", True))))
+                return self._json(HTTPStatus.OK if started else HTTPStatus.CONFLICT,
+                                  {"started": started, "jobs": len(opps), **batch_job.status()})
 
             if path == "/api/outreach/contacts":
                 opp = find_opportunity(str(body.get("key") or ""))
@@ -657,7 +720,7 @@ def make_handler(tracker: Path, seen: Path, token: str, port_ref: dict, lock: th
                         "company": opp["company"], "role": opp["title"], "status": "applied", "channel": "cold email",
                         "source": opp["url"], "contact_person": to, "deadline": opp.get("deadline") or "",
                         "notes": f"cold email sent {date.today().isoformat()}" + (f" to {to}" if to else ""),
-                        "cv_file": f"profile/tailored/{cv_id}.json" if cv_id else "",
+                        "cv_file": (f"profile/{record['pdf']}" if record.get("pdf") else f"profile/tailored/{cv_id}.json") if cv_id else "",
                     }, date.today())
                 record["sent"] = {"to": to, "on": date.today().isoformat()}
                 save_outreach(opp["key"], record)

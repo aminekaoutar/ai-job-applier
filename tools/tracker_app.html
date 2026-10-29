@@ -267,6 +267,7 @@ section.enter > *:nth-child(4) { animation-delay: .12s; }
       <div class="nav-label">Overview</div>
       <button role="tab" data-tab="dashboard" aria-selected="true"><svg class="i"><use href="#i-dashboard"/></svg><span class="txt">Dashboard</span></button>
       <button role="tab" data-tab="opportunities" aria-selected="false"><svg class="i"><use href="#i-sparkles"/></svg><span class="txt">Opportunities</span><span class="count" id="opp-nav-count"></span></button>
+      <button role="tab" data-tab="sendlist" aria-selected="false"><svg class="i"><use href="#i-send"/></svg><span class="txt">Send list</span><span class="count hot" id="send-nav-count"></span></button>
       <button role="tab" data-tab="applications" aria-selected="false"><svg class="i"><use href="#i-send"/></svg><span class="txt">Applications</span><span class="count" id="app-nav-count"></span></button>
       <button role="tab" data-tab="followups" aria-selected="false"><svg class="i"><use href="#i-bell"/></svg><span class="txt">Follow-ups</span><span id="fu-count" class="count hot hidden"></span></button>
       <div class="nav-label">You</div>
@@ -322,6 +323,28 @@ section.enter > *:nth-child(4) { animation-delay: .12s; }
             <span class="muted num" id="opp-count"></span>
           </div>
           <div class="table-wrap"><table id="opp-table"></table></div>
+        </div>
+      </section>
+
+      <section id="tab-sendlist" class="hidden">
+        <div class="panel">
+          <div class="sec-title">
+            <div><h2>A CV and a recruiter email for every job</h2>
+              <p class="muted" id="batch-status" style="margin:4px 0 0">Prepare everything once: each job gets a tailored CV as a PDF, the HR / recruiting email the company publishes (with its source), and a cold email ready to send from your own mailbox.</p></div>
+            <div class="toolbar" style="margin:0">
+              <label class="muted" style="display:flex;gap:6px;align-items:center;font-size:14px">Match ≥
+                <select id="batch-min" aria-label="Minimum match"><option value="0">all</option><option value="30" selected>30%</option><option value="45">45%</option><option value="60">60%</option></select></label>
+              <button class="btn primary" id="batch-btn"><svg class="i"><use href="#i-wand"/></svg> Prepare everything</button>
+              <a class="btn" href="/api/sendlist.csv"><svg class="i"><use href="#i-file"/></svg> Export CSV</a>
+            </div>
+          </div>
+          <div class="toolbar">
+            <div class="search"><svg class="i"><use href="#i-search"/></svg><input id="sq" type="search" placeholder="Search company, job, email…" aria-label="Search send list"></div>
+            <select id="s-email" aria-label="Email"><option value="">All jobs</option><option value="yes" selected>With an email</option><option value="no">No email published</option></select>
+            <label class="muted" style="display:flex;gap:7px;align-items:center;font-size:14px"><input type="checkbox" id="s-hide-sent" checked> Hide sent</label>
+            <span class="muted num" id="s-count"></span>
+          </div>
+          <div class="table-wrap"><table id="send-table"></table></div>
         </div>
       </section>
 
@@ -775,6 +798,7 @@ document.querySelectorAll("nav button").forEach(b => b.addEventListener("click",
 const TITLES = {
   dashboard: ["Dashboard", "Your search at a glance: who replied, who is waiting, who ghosted you."],
   opportunities: ["Opportunities", "Jobs found for you in Paris, best match with your profile first."],
+  sendlist: ["Send list", "Every job with its tailored CV (PDF) and the recruiter email to send it to."],
   applications: ["Applications", "Everything you have sent, with replies and follow-ups."],
   followups: ["Follow-ups", "Applications that have gone quiet and deserve a nudge."],
   profile: ["Profile", "Your CV, GitHub projects and skills - the source for every tailored CV."],
@@ -1347,14 +1371,136 @@ async function writeDraft() {
   } catch (err) { $("#o-note").textContent = ""; toast(err.message); }
   finally { btn.disabled = false; }
 }
+// ---------- Send list: every job with its CV PDF, recruiter email and cold email ----------
+let SEND = [];
+let SEND_OPEN = null;
+
+async function loadSendList() {
+  const r = await fetch("/api/sendlist");
+  SEND = (await r.json()).rows || [];
+  $("#send-nav-count").textContent = SEND.filter(x => x.contacts && x.contacts.length && !x.sent).length || "";
+  renderSendList();
+}
+
+function liRecruiterSearch(company) {
+  return `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(company + " talent acquisition recrutement")}`;
+}
+
+function mailtoFor(to, d) {
+  return `mailto:${encodeURIComponent(to || "")}?subject=${encodeURIComponent(d.subject || "")}&body=${encodeURIComponent(d.body || "")}`;
+}
+
+function renderSendList() {
+  const q = $("#sq").value.trim().toLowerCase(), only = $("#s-email").value, hideSent = $("#s-hide-sent").checked;
+  const rows = SEND.filter(r =>
+    (!q || [r.company, r.title, (r.contacts || []).map(c => c.email).join(" ")].join(" ").toLowerCase().includes(q)) &&
+    (only === "" || (only === "yes") === !!(r.contacts && r.contacts.length)) && (!hideSent || !r.sent));
+  const withEmail = SEND.filter(r => r.contacts && r.contacts.length).length;
+  $("#s-count").textContent = `${SEND.length} CVs ready · ${withEmail} with an email · ${SEND.filter(r => r.sent).length} sent`;
+  const t = $("#send-table");
+  if (!rows.length) {
+    t.innerHTML = `<tr><td class="empty">${icon("send")}<div>${SEND.length ? "Nothing matches these filters." : "Nothing prepared yet - click <b>Prepare everything</b> to build a CV and find an email for every job."}</div></td></tr>`;
+    return;
+  }
+  t.innerHTML = `<thead><tr><th>Match</th><th>Job</th><th>Recruiter email</th><th>CV</th><th></th></tr></thead><tbody>` +
+    rows.map(r => {
+      const c = (r.contacts || [])[0];
+      const email = c
+        ? `<div style="display:grid;gap:3px"><b class="num" style="font-size:13px">${esc(c.email)}</b><span><span class="tag ${c.kind === "recruiting" || c.kind === "posting" ? "ok" : ""}">${esc(c.kind)}</span> <a class="muted" style="font-size:12px" href="${esc(safeUrl(c.source))}" target="_blank" rel="noopener noreferrer">source</a>${r.contacts.length > 1 ? ` <span class="muted" style="font-size:12px">+${r.contacts.length - 1} more</span>` : ""}</span></div>`
+        : `<div style="display:grid;gap:3px"><span class="muted">none published</span><a style="font-size:12px" href="${esc(liRecruiterSearch(r.company))}" target="_blank" rel="noopener noreferrer">${icon("search")} recruiter on LinkedIn</a></div>`;
+      const cv = `<div style="display:grid;gap:4px">${r.pdf ? `<a class="tag ok" href="/cv/${encodeURIComponent(r.cv_id)}.pdf" target="_blank" rel="noopener">${icon("file")} PDF${r.coverage != null ? " · " + esc(r.coverage) + "%" : ""}</a>` : `<a class="tag" href="/cv/${encodeURIComponent(r.cv_id)}" target="_blank" rel="noopener">HTML</a>`}${r.from_title ? `<span class="tag" title="The posting could not be read; tailored to the title">title only</span>` : ""}</div>`;
+      const open = SEND_OPEN === r.key;
+      return `<tr data-k="${esc(r.key)}"><td>${ring(r.match ?? 0)}</td>
+        <td>${who(r.company, r.title, r.url)}</td><td>${email}</td><td>${cv}</td>
+        <td><div class="row-actions">${r.sent ? `<span class="tag ok">${icon("check")} sent ${esc(r.sent.on)}</span>` : ""}
+          <button class="btn small ${c ? "primary" : ""} s-open">${icon("send")} ${r.draft ? "Email" : "Write email"}</button></div></td></tr>` +
+        (open ? `<tr class="s-detail" data-k="${esc(r.key)}"><td colspan="5">${sendDetail(r)}</td></tr>` : "");
+    }).join("") + "</tbody>";
+}
+
+function sendDetail(r) {
+  const d = r.draft || {};
+  const opts = (r.contacts || []).map(c => `<option value="${esc(c.email)}">${esc(c.email)} (${esc(c.kind)})</option>`).join("");
+  return `<div class="stack" style="gap:10px;padding:6px 4px 10px">
+    <div class="fields" style="grid-template-columns:1fr 1fr">
+      <label>Send to${opts ? `<select class="s-to">${opts}<option value="">— other —</option></select>` : `<input class="s-to" type="email" placeholder="paste the recruiter's email">`}</label>
+      <label>Subject<input class="s-subject" value="${esc(d.subject || "")}"></label>
+    </div>
+    <label>Email<textarea class="s-body" rows="11">${esc(d.body || "")}</textarea></label>
+    <div class="toolbar" style="margin:0">
+      ${d.body ? "" : `<button class="btn primary s-write">${icon("wand")} Write it with Claude</button>`}
+      <a class="btn s-mailto" href="${esc(mailtoFor((r.contacts || [{}])[0].email, d))}">${icon("send")} Open in my mail app</a>
+      <button class="btn s-copy">${icon("check")} Copy</button>
+      ${r.pdf ? `<a class="btn" href="/cv/${encodeURIComponent(r.cv_id)}.pdf" target="_blank" rel="noopener">${icon("file")} CV PDF to attach</a>` : ""}
+      <button class="btn accent s-sent">Log as sent</button>
+      <span class="muted s-note" style="font-size:13px">Your mail app opens with the text - attach the CV PDF, check it, send.</span>
+    </div></div>`;
+}
+
+$("#send-table").addEventListener("click", async (e) => {
+  const tr = e.target.closest("tr[data-k]"); if (!tr) return;
+  const key = tr.dataset.k, r = SEND.find(x => x.key === key);
+  const btn = e.target.closest("button"); if (!btn) return;
+  const box = document.querySelector(`tr.s-detail[data-k="${CSS.escape(key)}"]`);
+  if (btn.classList.contains("s-open")) { SEND_OPEN = SEND_OPEN === key ? null : key; renderSendList(); return; }
+  if (!box) return;
+  const to = () => box.querySelector(".s-to").value.trim();
+  if (btn.classList.contains("s-write")) {
+    btn.disabled = true; box.querySelector(".s-note").innerHTML = `<span class="busy">Claude is writing…</span>`;
+    try {
+      const out = await api("/api/outreach/draft", { key, to: to() });
+      r.draft = out.draft; renderSendList();
+    } catch (err) { toast(err.message); btn.disabled = false; }
+  } else if (btn.classList.contains("s-copy")) {
+    try { await navigator.clipboard.writeText(`${box.querySelector(".s-subject").value}\n\n${box.querySelector(".s-body").value}`); toast("Copied"); }
+    catch (err) { toast("Select the text and copy it manually"); }
+  } else if (btn.classList.contains("s-sent")) {
+    try { await api("/api/outreach/sent", { key, to: to() }); toast(`Logged: ${r.company}`); loadSendList(); load(); }
+    catch (err) { toast(err.message); }
+  }
+});
+$("#send-table").addEventListener("input", (e) => {
+  const box = e.target.closest("tr.s-detail"); if (!box) return;
+  box.querySelector(".s-mailto").setAttribute("href", mailtoFor(box.querySelector(".s-to").value,
+    { subject: box.querySelector(".s-subject").value, body: box.querySelector(".s-body").value }));
+});
+["#sq", "#s-email", "#s-hide-sent"].forEach(s => $(s).addEventListener("input", renderSendList));
+
+async function pollBatch() {
+  const st = await (await fetch("/api/batch/status")).json();
+  const el = $("#batch-status"), btn = $("#batch-btn");
+  if (st.running) {
+    btn.disabled = true;
+    el.innerHTML = `<span class="busy">${esc(st.message)}</span> <span class="muted">You can keep using the app; results appear as they are ready.</span>`;
+    loadSendList();
+    setTimeout(pollBatch, 4000);
+    return;
+  }
+  btn.disabled = false;
+  if (st.error) { el.innerHTML = `<div class="warn">Stopped: ${esc(st.error)}</div>`; return; }
+  if (st.result) {
+    const s = st.result;
+    el.innerHTML = `Done: <b>${s.cvs}</b> CVs (${s.pdfs} PDFs), <b>${s.with_email}</b> jobs with a published email, <b>${s.drafts}</b> emails written` +
+      (s.from_title ? `, ${s.from_title} tailored from the title only (posting unreadable)` : "") + ".";
+    loadSendList(); load();
+  }
+}
+$("#batch-btn").addEventListener("click", async () => {
+  if (!PROF || !PROF.has_content) { toast("Import your CV on the Profile tab first"); showTab("profile"); return; }
+  const min = Number($("#batch-min").value);
+  if (!confirm(`Prepare a tailored CV (PDF) and look for a recruiting email for every job with a match of ${min}% or more? This runs in the background and can take up to an hour for a few hundred jobs.`)) return;
+  try { await api("/api/batch/start", { min_match: min, drafts: true }); pollBatch(); }
+  catch (err) { toast(err.message); }
+});
 
 $("#ghost-days").value = store("tracker.ghost") || 21;
-const TABS = ["dashboard", "applications", "followups", "opportunities", "profile", "builder"];
+const TABS = ["dashboard", "applications", "followups", "opportunities", "sendlist", "profile", "builder"];
 const fromHash = () => TABS.includes(location.hash.slice(1)) ? location.hash.slice(1) : null;
 window.addEventListener("hashchange", () => fromHash() && showTab(fromHash()));
 showTab(fromHash() || store("tracker.tab") || "dashboard");
 window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => DATA && render());
-Promise.all([load(), loadProfile()]).then(() => {
+Promise.all([load(), loadProfile(), loadSendList()]).then(() => {
+  pollBatch();
   // Deep link: ?opp=<key>#builder opens the CV builder for that job.
   const qs = new URLSearchParams(location.search);
   const o = qs.get("opp") && oppByKey(qs.get("opp"));
