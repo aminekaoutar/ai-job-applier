@@ -21,6 +21,7 @@ import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -98,6 +99,84 @@ def readme_text(markdown: str) -> str:
     return "\n".join(l.strip() for l in t.splitlines() if l.strip())[:README_CHARS]
 
 
+# Files that prove a practice, by path (lowercased). Each maps to skills.
+FILE_EVIDENCE = [
+    (re.compile(r"(^|/)dockerfile[^/]*$"), ["Docker"]),
+    (re.compile(r"(^|/)(docker-)?compose[^/]*\.ya?ml$"), ["Docker", "Docker Compose"]),
+    (re.compile(r"^\.github/workflows/[^/]+\.ya?ml$"), ["GitHub Actions", "CI/CD"]),
+    (re.compile(r"(^|/)\.gitlab-ci\.ya?ml$"), ["GitLab CI", "CI/CD"]),
+    (re.compile(r"(^|/)jenkinsfile$"), ["Jenkins", "CI/CD"]),
+    (re.compile(r"(^|/)chart\.ya?ml$"), ["Helm", "Kubernetes"]),
+    (re.compile(r"(^|/)(k8s|kubernetes|manifests|helm)/.+\.ya?ml$"), ["Kubernetes"]),
+    (re.compile(r"(^|/)[^/]*(deployment|ingress|kustomization)[^/]*\.ya?ml$"), ["Kubernetes"]),
+    (re.compile(r"\.tf$"), ["Terraform"]),
+    (re.compile(r"\.ipynb$"), ["Jupyter"]),
+    (re.compile(r"(^|/)mlruns/|(^|/)mlproject$"), ["MLflow"]),
+    (re.compile(r"(^|/)dvc\.yaml$|\.dvc$"), ["DVC"]),
+]
+DEP_FILES = re.compile(r"(^|/)(requirements[^/]*\.txt|pyproject\.toml|package\.json|environment\.ya?ml)$")
+# Package name (lowercased, normalised "_" -> "-") prefix -> skill.
+DEPS = {
+    "langchain": "LangChain", "langgraph": "LangGraph", "llama-index": "LlamaIndex", "crewai": "CrewAI",
+    "autogen": "AutoGen", "pyautogen": "AutoGen", "openai": "OpenAI", "anthropic": "Anthropic",
+    "mistralai": "Mistral", "groq": "Groq", "google-generativeai": "Gemini", "google-genai": "Gemini",
+    "transformers": "Transformers", "sentence-transformers": "Sentence-Transformers", "huggingface-hub": "Hugging Face",
+    "torch": "PyTorch", "tensorflow": "TensorFlow", "keras": "Keras", "scikit-learn": "scikit-learn",
+    "sklearn": "scikit-learn", "xgboost": "XGBoost", "lightgbm": "LightGBM", "catboost": "CatBoost",
+    "statsmodels": "statsmodels", "prophet": "Prophet", "pandas": "pandas", "numpy": "NumPy", "scipy": "SciPy",
+    "matplotlib": "Matplotlib", "seaborn": "Seaborn", "plotly": "Plotly", "mlflow": "MLflow", "wandb": "Weights & Biases",
+    "optuna": "Optuna", "fastapi": "FastAPI", "flask": "Flask", "django": "Django", "streamlit": "Streamlit",
+    "gradio": "Gradio", "faiss": "FAISS", "chromadb": "ChromaDB", "pinecone": "Pinecone", "qdrant-client": "Qdrant",
+    "weaviate": "Weaviate", "pgvector": "pgvector", "pymongo": "MongoDB", "psycopg": "PostgreSQL",
+    "sqlalchemy": "SQLAlchemy", "redis": "Redis", "celery": "Celery", "kafka": "Kafka", "pika": "RabbitMQ",
+    "selenium": "Selenium", "beautifulsoup4": "BeautifulSoup", "scrapy": "Scrapy", "playwright": "Playwright",
+    "crawl4ai": "Crawl4AI", "spacy": "spaCy", "nltk": "NLTK", "opencv": "OpenCV", "ultralytics": "YOLO",
+    "boto3": "AWS", "azure": "Azure", "google-cloud": "GCP", "pytest": "pytest", "tavily": "Tavily",
+    "pydantic": "Pydantic", "tiktoken": "tiktoken", "llama-cpp": "llama.cpp", "ollama": "Ollama", "vllm": "vLLM",
+    "peft": "PEFT", "trl": "TRL", "datasets": "Hugging Face Datasets", "mcp": "MCP",
+    # package.json
+    "react": "React", "next": "Next.js", "vue": "Vue", "express": "Express", "tailwindcss": "Tailwind",
+    "typescript": "TypeScript", "@langchain": "LangChain", "@anthropic-ai": "Anthropic", "@modelcontextprotocol": "MCP",
+}
+
+
+def deps_in(text: str) -> set:
+    """Skills named by a dependency file's package names."""
+    names = set()
+    for line in text.splitlines():
+        line = line.strip().lower()
+        m = re.match(r'^"?([@a-z0-9][a-z0-9._/@-]*)', line)
+        if m:
+            names.add(m.group(1).replace("_", "-").strip('"'))
+    for m in re.finditer(r'"([@a-z0-9][a-z0-9._/@-]*)"\s*:', text.lower()):  # package.json keys
+        names.add(m.group(1).replace("_", "-"))
+    found = set()
+    for name in names:
+        for key, skill in DEPS.items():
+            if name == key or name.startswith(key + "-") or name.startswith(key + "/") or (key.startswith("@") and name.startswith(key)):
+                found.add(skill)
+    return found
+
+
+def repo_evidence(user: str, repo: dict) -> dict:
+    """{skill: [paths that prove it]} from the repo's file tree and dependency files."""
+    branch = repo.get("default_branch") or "main"
+    tree = _get(f"/repos/{user}/{repo['name']}/git/trees/{branch}?recursive=1") or {}
+    paths = [t["path"] for t in tree.get("tree", []) if t.get("type") == "blob"]
+    evidence = {}
+    for path in paths:
+        low = path.lower()
+        for rx, skills in FILE_EVIDENCE:
+            if rx.search(low):
+                for sk in skills:
+                    evidence.setdefault(sk, []).append(path)
+    for path in [x for x in paths if DEP_FILES.search(x.lower()) and "node_modules" not in x][:3]:
+        raw = _get(f"/repos/{user}/{repo['name']}/contents/{urllib.parse.quote(path)}", accept="application/vnd.github.raw") or ""
+        for sk in deps_in(raw):
+            evidence.setdefault(sk, []).append(path)
+    return {k: sorted(set(v))[:3] for k, v in evidence.items()}
+
+
 NOT_SKILLS = {"batchfile", "dockerfile", "makefile", "procfile", "shell", "powershell", "jupyter notebook"}
 
 
@@ -119,7 +198,7 @@ def pretty_name(repo: str) -> str:
 
 def fetch_repos(user: str, limit: int = 30, cache_dir: Path | None = None) -> list[dict]:
     user = username_from(user)
-    cache = cache_dir / f"github-{user.lower()}.json" if cache_dir else None
+    cache = cache_dir / f"github-v2-{user.lower()}.json" if cache_dir else None
     if cache and cache.is_file() and time.time() - cache.stat().st_mtime < CACHE_SECONDS:
         try:
             return json.loads(cache.read_text(encoding="utf-8"))
@@ -136,7 +215,13 @@ def fetch_repos(user: str, limit: int = 30, cache_dir: Path | None = None) -> li
         text = readme_text(raw)
         desc = (r.get("description") or "").strip()
         detected = ps.terms_in(f"{desc}\n{text}\n{' '.join(r.get('topics') or [])}")
+        try:
+            evidence = repo_evidence(user, r)
+        except (GitHubError, ValueError, OSError):
+            evidence = {}  # best effort: the README-based skills still stand
         skills = clean_skills(list(langs), detected)
+        have = {s.lower() for s in skills}
+        skills += [sk for sk in sorted(evidence) if sk.lower() not in have]
         return {
             "repo": r["name"],
             "name": pretty_name(r["name"]),
@@ -150,6 +235,7 @@ def fetch_repos(user: str, limit: int = 30, cache_dir: Path | None = None) -> li
             "created": (r.get("created_at") or "")[:7],
             "pushed": (r.get("pushed_at") or "")[:7],
             "has_content": bool(desc or len(text) > 80),
+            "evidence": evidence,
         }
 
     with ThreadPoolExecutor(max_workers=6) as pool:
@@ -223,9 +309,11 @@ def to_projects(repos: list[dict], use_claude: bool, language: str = "French") -
         s = summaries.get(r["repo"]) or {}
         bullets = [str(b).strip() for b in s.get("bullets") or [] if str(b).strip()] or local_bullets(r)
         skills = list(dict.fromkeys([str(x).strip() for x in s.get("skills") or [] if str(x).strip()] + r["skills"]))
+        # Evidence-backed skills (CI files, manifests, dependencies) always make the list.
+        proven = [sk for sk in r.get("evidence", {}) if sk.lower() not in {x.lower() for x in skills}]
         projects.append({
             "id": ps.new_id(), "name": r["name"], "role": "GitHub", "start": _month(r["created"]),
-            "end": _month(r["pushed"]), "url": r["url"], "bullets": bullets[:3], "skills": skills[:10],
+            "end": _month(r["pushed"]), "url": r["url"], "bullets": bullets[:3], "skills": (skills[:10] + proven)[:16],
             "_match_text": repo_match_text(r),
         })
     return projects, warnings

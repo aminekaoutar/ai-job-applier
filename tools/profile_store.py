@@ -49,7 +49,7 @@ VOCAB = [
     "python", "java", "javascript", "typescript", "react", "next.js", "vue", "angular", "node.js",
     "html", "css", "tailwind", "sql", "nosql", "postgresql", "mysql", "mongodb", "redis", "kafka",
     "rabbitmq", "elasticsearch", "docker", "kubernetes", "terraform", "ansible", "linux", "git",
-    "ci/cd", "github actions", "gitlab", "jenkins", "aws", "azure", "gcp", "google cloud",
+    "ci/cd", "github actions", "gitlab", "jenkins", "aws", "azure", "gcp",
     "bedrock", "vertex ai", "azure openai", "sagemaker", "databricks", "snowflake", "bigquery",
     "spark", "pyspark", "hadoop", "airflow", "dbt", "mlflow", "kubeflow", "pandas", "numpy",
     "scikit-learn", "pytorch", "tensorflow", "keras", "xgboost", "opencv", "yolo", "hugging face",
@@ -83,6 +83,7 @@ SYNONYMS = {
     "github copilot": "copilot", "chatgpt": "gpt", "gpt-4": "gpt", "gpt-4o": "gpt",
     "science des donnees": "data science", "ingenierie des donnees": "data engineering",
     "analyse de donnees": "data analysis", "fine tuning": "fine-tuning", "finetuning": "fine-tuning",
+    "google cloud": "gcp", "google cloud platform": "gcp",
     "tableau software": "tableau", "tableau desktop": "tableau",  # bare "tableau" is just French for "table"
     "cybersecurite": "cybersecurity", "securite": "security", "reseau": "networking", "reseaux": "networking",
     "pare-feu": "firewall", "infrastructures": "infrastructure", "on premise": "on-premise", "gpus": "gpu",
@@ -840,7 +841,8 @@ def detect_language(text: str) -> str:
 def tailor(profile: dict, posting: str, job_title: str = "", company: str = "",
            max_bullets: int = 4, max_projects: int = 3, include_photo: bool = True, max_skills: int = 18) -> dict:
     jd = f"{job_title}\n{posting}"
-    jd_list = posting_terms(jd)
+    # Vague words (API, cloud, a spoken language) are not skills to match or to lack.
+    jd_list = [t for t in posting_terms(jd) if t not in GENERIC_TERMS]
     jd_terms = set(jd_list)
     jd_words = words_in(jd)
     have = profile_terms(profile)
@@ -861,7 +863,9 @@ def tailor(profile: dict, posting: str, job_title: str = "", company: str = "",
     skills = profile["skills"] or sorted(have)
     matched_skills = [s for s in skills if terms_in(s) & jd_terms or fold(s) in jd_terms]
     # The posting's skills first, then the rest, capped: a CV skills line is a summary, not an inventory.
-    skills = (matched_skills + [s for s in skills if s not in matched_skills])[:max_skills]
+    rest = [s for s in skills if s not in matched_skills]
+    rest.sort(key=lambda s: 0 if (terms_in(s) or fold(s) in DISPLAY) else 1)  # known technologies before obscure libs
+    skills = (matched_skills + rest)[:max_skills]
 
     matched = [display_term(t) for t in jd_list if t in have]
     missing = [display_term(t) for t in jd_list if t not in have]

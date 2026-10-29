@@ -45,6 +45,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from rank_state import STATE, TRACKER, norm  # noqa: E402
 import github_import  # noqa: E402
 import job_finder  # noqa: E402
+import outreach  # noqa: E402
 import profile_store as ps  # noqa: E402
 
 PAGE = Path(__file__).resolve().parent / "tracker_app.html"
@@ -426,6 +427,20 @@ def make_handler(tracker: Path, seen: Path, token: str, port_ref: dict, lock: th
                 return o
         raise ValueError("that job is no longer in the opportunities list")
 
+    def outreach_path(key: str) -> Path:
+        safe = re.sub(r"[^a-z0-9_-]", "-", key.lower())[:120] or "job"
+        return profile_dir / "outreach" / f"{safe}.json"
+
+    def load_outreach(key: str) -> dict:
+        path = outreach_path(key)
+        try:
+            return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+        except (OSError, json.JSONDecodeError):
+            return {}
+
+    def save_outreach(key: str, record: dict) -> None:
+        ps._atomic_write(outreach_path(key), json.dumps(record, ensure_ascii=False, indent=2).encode("utf-8"))
+
     def build_cv(profile: dict, posting: str, body: dict, opp: dict | None) -> dict:
         cv = ps.tailor(profile, posting, str(body.get("job_title") or (opp or {}).get("title") or ""),
                        str(body.get("company") or (opp or {}).get("company") or ""),
@@ -591,13 +606,62 @@ def make_handler(tracker: Path, seen: Path, token: str, port_ref: dict, lock: th
                 if not ps.has_content(profile):
                     raise ValueError("add your CV on the Profile tab first")
                 opp = find_opportunity(str(body.get("key") or ""))
-                posting = job_finder.fetch_posting(opp["url"])
-                if len(posting.strip()) < 30:
-                    # Indeed, Welcome to the Jungle, HelloWork: the page has to be pasted.
-                    return self._json(HTTPStatus.OK, {"need_paste": True, "opportunity": opp})
+                details = job_finder.posting_details(opp["url"])
+                posting = details["text"]
+                from_title = len(posting.strip()) < 30
+                if from_title:
+                    # Unreadable page (Indeed blocks robots; some sites embed no job data):
+                    # still build from the title so the button never dead-ends, and say so.
+                    posting = f"{opp['title']}\n{opp['company']}"
                 cv = build_cv(profile, posting, body, opp)
                 return self._json(HTTPStatus.OK, {"cv": {k: v for k, v in cv.items() if k != "posting"},
-                                                  "posting": posting, "tailored": ps.list_tailored(profile_dir)})
+                                                  "posting": "" if from_title else posting, "from_title": from_title,
+                                                  "tailored": ps.list_tailored(profile_dir)})
+
+            if path == "/api/outreach/contacts":
+                opp = find_opportunity(str(body.get("key") or ""))
+                details = job_finder.posting_details(opp["url"])
+                found = outreach.find_contacts(opp, details)
+                record = {**load_outreach(opp["key"]), **found, "key": opp["key"], "company": opp["company"],
+                          "title": opp["title"], "posting": details["text"][:20000]}
+                save_outreach(opp["key"], record)
+                return self._json(HTTPStatus.OK, {k: v for k, v in record.items() if k != "posting"})
+
+            if path == "/api/outreach/draft":
+                profile = ps.load_profile(profile_dir)
+                if not ps.has_content(profile):
+                    raise ValueError("add your CV on the Profile tab first")
+                opp = find_opportunity(str(body.get("key") or ""))
+                record = load_outreach(opp["key"])
+                posting = record.get("posting") or job_finder.fetch_posting(opp["url"])
+                cv = None
+                for item in ps.list_tailored(profile_dir):
+                    if item.get("opportunity") == opp["key"]:
+                        cv = ps.load_tailored(item["id"], profile_dir)
+                        break
+                draft = outreach.draft_email(profile, opp, posting, str(body.get("to") or ""), cv,
+                                             use_claude=bool(body.get("claude", True)) and ps.claude_path() is not None)
+                record.update(key=opp["key"], company=opp["company"], title=opp["title"], draft=draft,
+                              posting=posting[:20000], cv_id=cv["id"] if cv else None)
+                save_outreach(opp["key"], record)
+                return self._json(HTTPStatus.OK, {"draft": draft, "cv_id": record["cv_id"]})
+
+            if path == "/api/outreach/sent":
+                opp = find_opportunity(str(body.get("key") or ""))
+                to = clean_field(body.get("to"))
+                record = load_outreach(opp["key"])
+                cv_id = record.get("cv_id")
+                with lock:
+                    version = read_tracker(tracker)[2]
+                    apply_edit(tracker, version, "add", {
+                        "company": opp["company"], "role": opp["title"], "status": "applied", "channel": "cold email",
+                        "source": opp["url"], "contact_person": to, "deadline": opp.get("deadline") or "",
+                        "notes": f"cold email sent {date.today().isoformat()}" + (f" to {to}" if to else ""),
+                        "cv_file": f"profile/tailored/{cv_id}.json" if cv_id else "",
+                    }, date.today())
+                record["sent"] = {"to": to, "on": date.today().isoformat()}
+                save_outreach(opp["key"], record)
+                return self._json(HTTPStatus.OK, {"ok": True})
 
             if path == "/api/github/repos":
                 user = github_import.username_from(str(body.get("user") or ""))
@@ -608,7 +672,7 @@ def make_handler(tracker: Path, seen: Path, token: str, port_ref: dict, lock: th
                 github_cache[user.lower()] = repos
                 mine = ps.load_profile(profile_dir)["projects"]
                 return self._json(HTTPStatus.OK, {"user": user, "repos": [
-                    {k: r[k] for k in ("repo", "name", "url", "description", "skills", "stars", "pushed", "has_content")}
+                    {k: r.get(k) for k in ("repo", "name", "url", "description", "skills", "stars", "pushed", "has_content", "evidence")}
                     | {"excerpt": r["readme"][:280],
                        "in_profile": github_import.existing_project(github_import.repo_match_text(r), r["url"], mine) is not None}
                     for r in repos]})

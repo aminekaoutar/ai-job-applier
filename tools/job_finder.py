@@ -95,28 +95,123 @@ def linkedin_search(query: str, location: str = "paris", page: int = 1, jobage: 
     return [{**r, "portal": "linkedin-search", "skills": ""} for r in json.loads(done.stdout).get("results", [])]
 
 
-def fetch_posting(url: str) -> str:
-    """Full text of a Free-Work or LinkedIn posting, or "" when it cannot be fetched."""
-    m = re.match(r"https://www\.free-work\.com/.*/job-mission/([a-z0-9-]+)/?$", url or "")
-    if m:
-        try:
-            r = _get_json(f"{FW_API}/job_postings/{m.group(1)}")
-        except Exception:
+LINKEDIN_UA = "Mozilla/5.0 (compatible; linkedin-search-cli/1.0)"
+FW_COMPANY = re.compile(r"https://www\.free-work\.com/.*/job-mission/([a-z0-9-]+)/?$")
+LI_JOB = re.compile(r"https://(?:[a-z]+\.)?linkedin\.com/jobs/view/(?:[^/?#]*-)?(\d{6,})")
+
+
+def _get_text(url: str, ua: str = UA, timeout: int = 20) -> str:
+    req = urllib.request.Request(url, headers={"User-Agent": ua, "Accept": "text/html,application/xhtml+xml",
+                                                "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.8"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        if "html" not in (r.headers.get("Content-Type") or "html"):
             return ""
-        parts = [r.get("title") or "", html_text(r.get("description") or ""),
-                 html_text(r.get("candidateProfile") or ""), html_text(r.get("companyDescription") or ""),
-                 "Skills: " + ", ".join(s.get("name") or "" for s in r.get("skills") or [])]
-        return "\n\n".join(p for p in parts if p.strip())
-    m = re.match(r"https://(?:[a-z]+\.)?linkedin\.com/jobs/view/(?:[^/]*-)?(\d{6,})", url or "")
-    bun = find_bun()
-    if m and bun:
-        cli = ROOT / ".agents/skills/linkedin-search/cli/src/cli.ts"
-        done = subprocess.run([bun, "run", str(cli), "detail", m.group(1), "--format", "json"],
-                              capture_output=True, text=True, timeout=120)
-        if done.returncode == 0:
-            d = json.loads(done.stdout)
-            return f"{d.get('title') or ''}\n\n{d.get('description') or ''}"
-    return ""
+        return r.read(2_000_000).decode(r.headers.get_content_charset() or "utf-8", "replace")
+
+
+def _div_by_class(markup: str, cls: str) -> str | None:
+    """Inner HTML of the first <div> carrying a class, counting nested divs."""
+    m = re.search(r'<div[^>]*class="[^"]*' + re.escape(cls) + r'[^"]*"[^>]*>', markup)
+    if not m:
+        return None
+    i, depth = m.end(), 1
+    while depth and i < len(markup):
+        o, c = markup.find("<div", i), markup.find("</div>", i)
+        if c == -1:
+            return None
+        if o != -1 and o < c:
+            depth, i = depth + 1, o + 4
+        else:
+            depth, i = depth - 1, c + 6
+    return markup[m.end():i - 6]
+
+
+def linkedin_posting(job_id: str) -> dict:
+    """LinkedIn's public guest job page - the endpoint the linkedin-search CLI reads."""
+    html_ = _get_text(f"https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{job_id}", LINKEDIN_UA)
+    body = _div_by_class(html_, "show-more-less-html__markup") or _div_by_class(html_, "description__text") or ""
+    title = re.search(r'class="(?:top-card-layout__title|topcard__title)[^"]*"[^>]*>(.*?)</h[12]>', html_, re.S)
+    company = re.search(r'class="topcard__org-name-link[^"]*"[^>]*>(.*?)</a>', html_, re.S)
+    text = html_text(body)
+    head = html_text(title.group(1)) if title else ""
+    return {"text": f"{head}\n\n{text}".strip() if text else "", "company_url": None,
+            "company": html_text(company.group(1)) if company else None, "emails": []}
+
+
+def _jsonld_jobposting(markup: str) -> dict | None:
+    for blk in re.findall(r'<script[^>]*type="application/ld\+json"[^>]*>(.*?)</script>', markup, re.S | re.I):
+        try:
+            data = json.loads(blk.strip())
+        except json.JSONDecodeError:
+            continue
+        stack = data if isinstance(data, list) else [data]
+        while stack:
+            item = stack.pop()
+            if isinstance(item, dict):
+                if item.get("@type") == "JobPosting" or "JobPosting" in (item.get("@type") or []):
+                    return item
+                stack.extend(item.get("@graph") or [])
+            elif isinstance(item, list):
+                stack.extend(item)
+    return None
+
+
+def generic_posting(url: str) -> dict:
+    """Any job page that embeds schema.org JobPosting data - only where robots.txt allows."""
+    import robots_check
+    code, _ = robots_check.gate(url)
+    if code != 0:
+        return {"text": "", "company_url": None, "emails": [], "blocked": True}
+    try:
+        markup = _get_text(url)
+    except Exception:
+        return {"text": "", "company_url": None, "emails": []}
+    job = _jsonld_jobposting(markup)
+    if not job:
+        return {"text": "", "company_url": None, "emails": []}
+    org = job.get("hiringOrganization") or {}
+    org = org if isinstance(org, dict) else {}
+    site = org.get("sameAs") or org.get("url")
+    site = site[0] if isinstance(site, list) and site else site
+    text = f"{job.get('title') or ''}\n\n{html_text(str(job.get('description') or ''))}".strip()
+    return {"text": text, "company_url": site if isinstance(site, str) and site.startswith("http") else None,
+            "company": org.get("name"), "emails": []}
+
+
+def freework_posting(slug: str) -> dict:
+    r = _get_json(f"{FW_API}/job_postings/{slug}")
+    parts = [r.get("title") or "", html_text(r.get("description") or ""),
+             html_text(r.get("candidateProfile") or ""), html_text(r.get("companyDescription") or ""),
+             "Skills: " + ", ".join(s.get("name") or "" for s in r.get("skills") or [])]
+    site = None
+    company = r.get("company") or {}
+    if company.get("slug"):
+        try:
+            site = _get_json(f"{FW_API}/companies/{company['slug']}").get("websiteUrl")
+        except Exception:
+            site = None
+    contact = r.get("applicationContact")
+    return {"text": "\n\n".join(p for p in parts if p.strip()), "company_url": site, "company": company.get("name"),
+            "emails": [contact] if isinstance(contact, str) and "@" in contact else []}
+
+
+def posting_details(url: str) -> dict:
+    """{text, company_url, company, emails, source} for a posting URL; text is "" when unreadable."""
+    try:
+        if m := FW_COMPANY.match(url or ""):
+            return {**freework_posting(m.group(1)), "source": "free-work"}
+        if m := LI_JOB.match(url or ""):
+            return {**linkedin_posting(m.group(1)), "source": "linkedin"}
+        if (url or "").startswith("http"):
+            return {**generic_posting(url), "source": "page"}
+    except Exception:
+        pass
+    return {"text": "", "company_url": None, "company": None, "emails": [], "source": None}
+
+
+def fetch_posting(url: str) -> str:
+    """Full text of a posting, or "" when it cannot be fetched."""
+    return posting_details(url)["text"]
 
 
 def fit_label(score: int) -> str:

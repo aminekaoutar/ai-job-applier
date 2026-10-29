@@ -468,6 +468,7 @@ section.enter > *:nth-child(4) { animation-delay: .12s; }
           </div>
           <div class="stack">
             <div class="panel" id="b-result"><div class="empty"><svg class="i"><use href="#i-file"/></svg><div>Pick a job on the left (or click "Build CV" on any opportunity).<br>Your own experiences, bullets, projects and skills are ranked against the posting; nothing is invented.</div></div></div>
+            <div class="panel hidden" id="b-outreach"></div>
           </div>
         </div>
       </section>
@@ -765,7 +766,7 @@ function renderOpps() {
       <td>${who(o.company, o.title, o.url)}${fit ? `<div style="margin:4px 0 0 47px">${fit}</div>` : ""}</td>
       <td class="muted" style="min-width:140px">${esc(o.location || "—")}</td><td style="white-space:nowrap">${esc(o.portal)}</td>
       <td class="num muted" style="white-space:nowrap">${esc(o.posted_date || o.first_seen || "—")}</td><td>${cv}</td>
-      <td><div class="row-actions"><button class="btn small primary build">${icon("wand")} ${o.cv ? "Rebuild" : "Build CV"}</button><button class="btn small applied">Mark applied</button></div></td></tr>`;
+      <td><div class="row-actions"><button class="btn small primary build">${icon("wand")} ${o.cv ? "Rebuild" : "Build CV"}</button><button class="btn small reach">${icon("send")} Reach out</button><button class="btn small applied">Mark applied</button></div></td></tr>`;
     }).join("") + "</tbody>" + (rows.length > shown.length ? `<tfoot><tr><td colspan="7" class="muted" style="text-align:center">Showing the best ${shown.length} of ${rows.length} - search or filter to narrow down.</td></tr></tfoot>` : "");
 }
 
@@ -822,6 +823,7 @@ $("#opp-table").addEventListener("click", async (e) => {
   const o = DATA.opportunities[Number(tr.dataset.o)];
   const btn = e.target.closest("button"); if (!btn) return;
   if (btn.classList.contains("build")) { openBuilderFor(o); return; }
+  if (btn.classList.contains("reach")) { o._reach = true; openBuilderFor(o); return; }
   if (btn.classList.contains("applied")) markApplied(o);
 });
 
@@ -1082,16 +1084,14 @@ async function openBuilderFor(o) {
   $("#b-build").disabled = true;
   try {
     const out = await api("/api/cv/for-opportunity", { key: o.key, ...buildOptions() });
-    if (out.need_paste) {
-      $("#b-fetch-status").innerHTML = `<span class="muted">(this site can't be fetched - <a href="${esc(safeUrl(o.url))}" target="_blank" rel="noopener noreferrer">open the posting</a>, paste it here, then Build)</span>`;
-      jobCard(o, `<div class="warn">${esc(o.portal)} pages can't be read automatically. Open the posting, paste its text on the left, and click <b>Build tailored CV</b>.</div>`);
-      $("#b-posting").focus();
-      return;
-    }
     $("#b-posting").value = out.posting || "";
-    $("#b-fetch-status").textContent = "(fetched)";
+    $("#b-fetch-status").innerHTML = out.from_title
+      ? `<span class="muted">(could not read this site - <a href="${esc(safeUrl(o.url))}" target="_blank" rel="noopener noreferrer">open the posting</a>, paste it here and Build again)</span>`
+      : "(fetched)";
     PROF.tailored = out.tailored; renderSaved();
-    showResult(out.cv, o);
+    showResult(out.cv, o, out.from_title);
+    renderOutreach(o, o._reach);
+    delete o._reach;
     load();
   } catch (err) { jobCard(o, ""); toast(err.message); }
   finally { $("#b-build").disabled = false; }
@@ -1119,8 +1119,8 @@ function jobCard(o, below) {
   if (ap) ap.addEventListener("click", () => { const fresh = oppByKey(o.key) || o; markApplied(fresh); });
 }
 
-function showResult(cv, o) {
-  jobCard(o, `<div class="sec-title"><div><h2>Your CV for ${esc(cv.company || "this job")}</h2>
+function showResult(cv, o, fromTitle) {
+  jobCard(o, (fromTitle ? `<div class="warn">This posting could not be read, so the CV was tailored to the <b>job title only</b>. Paste the description on the left and click <b>Build tailored CV</b> for a sharper match.</div>` : "") + `<div class="sec-title"><div><h2>Your CV for ${esc(cv.company || "this job")}</h2>
         <p class="muted" style="margin:4px 0 0">${cv.coverage != null ? `<b class="num">${esc(cv.matched.length)}/${esc(cv.terms_total)}</b> of the skills this posting names are in your profile (${esc(cv.coverage)}%). ` : "No known skills detected in this posting. "}${esc(cv.language)}${cv.polished ? " · polished by Claude" : ""}</p></div>
         <a class="btn primary" href="/cv/${encodeURIComponent(cv.id)}" target="_blank" rel="noopener">${icon("printer")} Open &amp; save as PDF</a></div>
       <h3>You have</h3><div class="chips">${cv.matched.map(t => `<span class="chip ok">${esc(t)}</span>`).join("") || `<span class="muted">none detected</span>`}</div>
@@ -1159,7 +1159,7 @@ $("#b-build").addEventListener("click", async () => {
     });
     PROF.tailored = out.tailored; renderSaved();
     const cv = out.cv;
-    showResult(cv, o); $("#b-status").textContent = ""; load();
+    showResult(cv, o); renderOutreach(o || null, false); $("#b-status").textContent = ""; load();
     return;
     $("#b-result").innerHTML = `<div class="sec-title"><h2 style="margin:0">${esc(cv.company || "Tailored CV")} — ${esc(cv.job_title || "")}</h2>
         <a class="btn primary" href="/cv/${encodeURIComponent(cv.id)}" target="_blank" rel="noopener">Open &amp; print to PDF</a></div>
@@ -1264,6 +1264,89 @@ $("#gh-import").addEventListener("click", async () => {
   } catch (err) { $("#gh-status").textContent = ""; toast(err.message); }
   finally { $("#gh-import").disabled = false; }
 });
+// ---------- outreach: recruiter email + cold email ----------
+let OUT_OPP = null;
+
+function renderOutreach(o, autoFind) {
+  OUT_OPP = o;
+  const box = $("#b-outreach");
+  box.classList.toggle("hidden", !o);
+  if (!o) return;
+  box.innerHTML = `<div class="sec-title"><div><h2>Reach the recruiter</h2>
+      <p class="muted" style="margin:4px 0 0">Emails ${esc(o.company)} publishes itself (posting, website, legal notice). Nothing is guessed or sent for you.</p></div>
+      <button class="btn" id="o-find">${icon("search")} Find recruiter email</button></div>
+    <div id="o-contacts"></div>
+    <div class="fields" style="margin-top:10px;grid-template-columns:1fr auto">
+      <label>Send to<input id="o-to" type="email" placeholder="recrutement@company.fr - or a recruiter you found on LinkedIn"></label>
+      <button class="btn primary" id="o-draft" style="align-self:end">${icon("wand")} Write the email</button>
+    </div>
+    <div id="o-draft-box" class="stack hidden" style="margin-top:14px;gap:10px">
+      <label>Subject<input id="o-subject"></label>
+      <label>Email<textarea id="o-body" rows="12"></textarea></label>
+      <div class="toolbar" style="margin:0">
+        <button class="btn" id="o-copy">${icon("check")} Copy</button>
+        <a class="btn" id="o-mailto" href="#">${icon("send")} Open in my mail app</a>
+        <button class="btn accent" id="o-sent">Log as sent</button>
+        <span class="muted" id="o-note" style="font-size:13px"></span>
+      </div>
+    </div>`;
+  $("#o-find").addEventListener("click", findContacts);
+  $("#o-draft").addEventListener("click", writeDraft);
+  $("#o-copy").addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText(`${$("#o-subject").value}\n\n${$("#o-body").value}`); toast("Copied"); }
+    catch (e) { toast("Select the text and copy it manually"); }
+  });
+  ["#o-subject", "#o-body", "#o-to"].forEach(s => $(s).addEventListener("input", updateMailto));
+  $("#o-sent").addEventListener("click", async () => {
+    try { await api("/api/outreach/sent", { key: OUT_OPP.key, to: $("#o-to").value.trim() }); toast("Logged in your applications"); load(); }
+    catch (err) { toast(err.message); }
+  });
+  if (autoFind) findContacts();
+}
+
+function updateMailto() {
+  const to = $("#o-to").value.trim();
+  const href = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent($("#o-subject").value)}&body=${encodeURIComponent($("#o-body").value)}`;
+  $("#o-mailto").setAttribute("href", href);
+  $("#o-note").textContent = to ? "Attach your tailored CV (Open & save as PDF) before sending." : "Add an address, or paste the email into LinkedIn / the company form.";
+}
+
+async function findContacts() {
+  const box = $("#o-contacts");
+  box.innerHTML = `<span class="busy">Reading the posting and ${esc(OUT_OPP.company)}'s website…</span>`;
+  try {
+    const r = await api("/api/outreach/contacts", { key: OUT_OPP.key });
+    const site = r.site ? `<a href="${esc(safeUrl(r.site))}" target="_blank" rel="noopener noreferrer">${esc(r.site.replace(/^https?:\/\//, ""))}</a>` : "no website found";
+    const list = (r.contacts || []).map((c, i) => `<label class="repo ${i === 0 ? "on" : ""}" style="grid-template-columns:auto 1fr auto;align-items:center">
+        <input type="radio" name="o-pick" value="${esc(c.email)}" ${i === 0 ? "checked" : ""}>
+        <div><b>${esc(c.email)}</b> <span class="tag ${c.kind === "recruiting" || c.kind === "posting" ? "ok" : ""}">${esc(c.kind)}</span></div>
+        <a class="muted" style="font-size:12px" href="${esc(safeUrl(c.source))}" target="_blank" rel="noopener noreferrer">source</a></label>`).join("");
+    box.innerHTML = `<p class="muted" style="margin:0 0 8px;font-size:14px">Website: ${site}${r.site_note ? ` <span class="tag">${esc(r.site_note)}</span>` : ""}</p>` +
+      (list ? `<div class="repo-list" style="max-height:240px">${list}</div>`
+        : `<div class="warn">${esc(OUT_OPP.company)} publishes no email address${r.site ? " on its site (probably a contact form)" : ""}. Find the recruiter on LinkedIn (search "${esc(OUT_OPP.company)} talent acquisition"), or apply through the posting - the email below still works as a LinkedIn message.</div>`);
+    if (r.contacts && r.contacts.length) $("#o-to").value = r.contacts[0].email;
+    box.querySelectorAll("input[name=o-pick]").forEach(inp => inp.addEventListener("change", () => {
+      box.querySelectorAll(".repo").forEach(l => l.classList.toggle("on", l.contains(inp) && inp.checked));
+      $("#o-to").value = inp.value; updateMailto();
+    }));
+    updateMailto();
+  } catch (err) { box.textContent = ""; toast(err.message); }
+}
+
+async function writeDraft() {
+  const btn = $("#o-draft");
+  btn.disabled = true;
+  $("#o-draft-box").classList.remove("hidden");
+  $("#o-body").value = ""; $("#o-subject").value = "";
+  $("#o-note").innerHTML = `<span class="busy">Claude is writing from your profile and this posting…</span>`;
+  try {
+    const r = await api("/api/outreach/draft", { key: OUT_OPP.key, to: $("#o-to").value.trim(), claude: true });
+    $("#o-subject").value = r.draft.subject; $("#o-body").value = r.draft.body;
+    updateMailto();
+    if (!r.cv_id) $("#o-note").textContent = "Tip: build the tailored CV first so you can attach it.";
+  } catch (err) { $("#o-note").textContent = ""; toast(err.message); }
+  finally { btn.disabled = false; }
+}
 
 $("#ghost-days").value = store("tracker.ghost") || 21;
 const TABS = ["dashboard", "applications", "followups", "opportunities", "profile", "builder"];
@@ -1273,9 +1356,9 @@ showTab(fromHash() || store("tracker.tab") || "dashboard");
 window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => DATA && render());
 Promise.all([load(), loadProfile()]).then(() => {
   // Deep link: ?opp=<key>#builder opens the CV builder for that job.
-  const k = new URLSearchParams(location.search).get("opp");
-  const o = k && oppByKey(k);
-  if (o) openBuilderFor(o);
+  const qs = new URLSearchParams(location.search);
+  const o = qs.get("opp") && oppByKey(qs.get("opp"));
+  if (o) { if (qs.get("reach")) o._reach = true; openBuilderFor(o); }
 }).catch(() => toast("Could not reach the tracker server - is it still running?"));
 setInterval(() => { if (document.visibilityState === "visible") load().catch(() => {}); }, 30000);
 
