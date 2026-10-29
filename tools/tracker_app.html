@@ -215,6 +215,27 @@ section.enter > *:nth-child(3) { animation-delay: .08s; }
 section.enter > *:nth-child(4) { animation-delay: .12s; }
 @keyframes rise { from { opacity: 0; transform: translateY(8px); } }
 
+/* ---------- job drawer ---------- */
+#opp-table tbody tr, #send-table tbody tr:not(.s-detail) { cursor: pointer; }
+.drawer-scrim { position: fixed; inset: 0; background: rgba(15, 23, 42, .45); opacity: 0; pointer-events: none; transition: opacity .2s var(--ease); z-index: 20; }
+.drawer { position: fixed; top: 0; right: 0; height: 100vh; width: min(760px, 100vw); background: var(--bg); background-image: var(--bg-grad);
+  box-shadow: -18px 0 40px -20px rgba(15, 23, 42, .5); transform: translateX(102%); transition: transform .25s var(--ease); z-index: 21; display: flex; flex-direction: column; }
+body.drawer-open .drawer { transform: none; }
+body.drawer-open .drawer-scrim { opacity: 1; pointer-events: auto; }
+body.drawer-open { overflow: hidden; }
+.drawer-top { display: flex; justify-content: flex-end; padding: 12px 16px 0; }
+#drawer-body { overflow-y: auto; padding: 4px 20px 32px; display: grid; gap: 14px; }
+.dw-head { display: flex; gap: 14px; align-items: center; padding: 4px 0 6px; }
+.dw-head .grow { flex: 1; min-width: 0; }
+.dw-sec h3 { margin-bottom: 10px; }
+.dw-to { padding: 12px 14px; border-radius: var(--radius-sm); border: 1px solid var(--line-blue); background: color-mix(in srgb, var(--primary-2) 7%, var(--card)); }
+.dw-role { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--primary); }
+.dw-email { font-size: 18px; font-weight: 700; color: var(--fg); margin: 2px 0; word-break: break-all; }
+.dw-links { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+button.chip { cursor: pointer; font: inherit; font-size: 12px; }
+.dw-pdf { width: 100%; height: 640px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: #fff; margin-top: 12px; }
+.dw-posting { white-space: pre-wrap; font-size: 14px; color: var(--fg); margin-top: 10px; max-height: 420px; overflow: auto; }
+details summary { cursor: pointer; }
 @media (max-width: 1100px) { .builder, .profile-grid { grid-template-columns: 1fr; } }
 @media (max-width: 900px) {
   .app { grid-template-columns: 1fr; }
@@ -498,6 +519,11 @@ section.enter > *:nth-child(4) { animation-delay: .12s; }
     </main>
   </div>
 </div>
+<div class="drawer-scrim" id="drawer-scrim"></div>
+<aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-label="Job details" aria-hidden="true">
+  <div class="drawer-top"><button class="btn small" id="drawer-close" aria-label="Close job details">Close ✕</button></div>
+  <div id="drawer-body"></div>
+</aside>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script>
@@ -1442,7 +1468,7 @@ $("#send-table").addEventListener("click", async (e) => {
   const key = tr.dataset.k, r = SEND.find(x => x.key === key);
   const btn = e.target.closest("button"); if (!btn) return;
   const box = document.querySelector(`tr.s-detail[data-k="${CSS.escape(key)}"]`);
-  if (btn.classList.contains("s-open")) { SEND_OPEN = SEND_OPEN === key ? null : key; renderSendList(); return; }
+  if (btn.classList.contains("s-open")) { openJob(key); return; }
   if (!box) return;
   const to = () => box.querySelector(".s-to").value.trim();
   if (btn.classList.contains("s-write")) {
@@ -1492,6 +1518,178 @@ $("#batch-btn").addEventListener("click", async () => {
   try { await api("/api/batch/start", { min_match: min, drafts: true }); pollBatch(); }
   catch (err) { toast(err.message); }
 });
+// ---------- Job drawer: everything about one job in one place ----------
+let DRAWER_KEY = null;
+let DRAWER = null;
+let SAVE_T = null;
+
+const ROLE = {
+  posting: ["Address given in the posting", "the recruiter handling this job"],
+  recruiting: ["HR / recruiting team", "the company's recruiting inbox"],
+  general: ["Company inbox", "ask them to forward to HR"],
+  other: ["Company address", "check it suits a job application"],
+};
+
+function liSearch(q) { return `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(q)}`; }
+
+function managerQuery(o) {
+  const t = (o.title || "").toLowerCase();
+  const area = /data|ia|ai|llm|ml|machine/.test(t) ? "Head of Data IA" : /dev|software|logiciel|python|fullstack/.test(t) ? "Engineering Manager" : "Manager";
+  return `${o.company} ${area}`;
+}
+
+async function openJob(key) {
+  DRAWER_KEY = key;
+  document.body.classList.add("drawer-open");
+  $("#drawer").setAttribute("aria-hidden", "false");
+  $("#drawer-body").innerHTML = `<div class="empty"><span class="busy">Loading…</span></div>`;
+  history.replaceState(null, "", `${location.pathname}?job=${encodeURIComponent(key)}${location.hash}`);
+  try {
+    const r = await fetch(`/api/job?key=${encodeURIComponent(key)}`);
+    DRAWER = await r.json();
+    if (!r.ok) throw new Error(DRAWER.error || "Job not found");
+    renderDrawer();
+  } catch (err) { $("#drawer-body").innerHTML = `<div class="warn">${esc(err.message)}</div>`; }
+  $("#drawer-close").focus();
+}
+
+function closeJob() {
+  DRAWER_KEY = null; DRAWER = null;
+  document.body.classList.remove("drawer-open");
+  $("#drawer").setAttribute("aria-hidden", "true");
+  history.replaceState(null, "", `${location.pathname}${location.hash}`);
+}
+
+function renderDrawer() {
+  const d = DRAWER, o = d.opp, cv = d.cv, contacts = d.contacts || [];
+  const best = contacts[0];
+  const draft = d.draft || {};
+  const to = draft.to || (best && best.email) || "";
+  const u = safeUrl(o.url), site = safeUrl(d.site);
+
+  const head = `<div class="dw-head">
+      ${o.match != null ? ring(o.match) : avatar(o.company)}
+      <div class="grow"><h2 style="font-size:19px">${esc(o.title)}</h2>
+        <div class="muted">${esc(o.company)} · ${esc(o.location || "")} · ${esc(o.portal)}${o.posted_date ? " · posted " + esc(o.posted_date) : ""}</div></div>
+      ${u ? `<a class="btn small" href="${esc(u)}" target="_blank" rel="noopener noreferrer">${icon("external")} Posting</a>` : ""}
+    </div>`;
+
+  if (!d.prepared) {
+    $("#drawer-body").innerHTML = head + `<div class="panel dw-sec" style="text-align:center">
+        ${icon("wand")}<h3 style="margin:8px 0 6px">Not prepared yet</h3>
+        <p class="muted" style="margin:0 0 12px">One click: read the posting, tailor your CV (PDF), find the HR / recruiting email and write the email to send.</p>
+        <button class="btn primary" id="dw-prepare">${icon("wand")} Prepare this job</button></div>`;
+    $("#dw-prepare").addEventListener("click", () => prepareJob(false));
+    return;
+  }
+
+  const who = best ? `<div class="dw-to">
+        <div class="dw-role">${esc(ROLE[best.kind]?.[0] || "Contact")}</div>
+        <div class="dw-email num">${esc(best.email)}</div>
+        <div class="muted" style="font-size:13px">${esc(ROLE[best.kind]?.[1] || "")} · <a href="${esc(safeUrl(best.source))}" target="_blank" rel="noopener noreferrer">where it was found</a></div>
+      </div>
+      ${contacts.length > 1 ? `<div class="chips" style="margin-top:8px">${contacts.slice(1).map(c => `<button class="chip dw-alt" data-email="${esc(c.email)}" title="${esc(ROLE[c.kind]?.[0] || "")}">${esc(c.email)}</button>`).join("")}</div>` : ""}`
+    : `<div class="warn" style="margin:0">${esc(o.company)} publishes no email address${site ? " (its site uses a contact form)" : ""}. Reach the people below on LinkedIn, or apply through the posting.</div>`;
+
+  $("#drawer-body").innerHTML = head + `
+    <section class="panel dw-sec"><h3>Send it to</h3>${who}
+      <div class="dw-links">
+        <a class="btn small" href="${esc(liSearch(`${o.company} talent acquisition recrutement`))}" target="_blank" rel="noopener noreferrer">${icon("user")} Recruiter on LinkedIn</a>
+        <a class="btn small" href="${esc(liSearch(managerQuery(o)))}" target="_blank" rel="noopener noreferrer">${icon("user")} Hiring manager on LinkedIn</a>
+        ${site ? `<a class="btn small" href="${esc(site)}" target="_blank" rel="noopener noreferrer">${icon("external")} ${esc(site.replace(/^https?:\/\//, "").replace(/\/$/, ""))}</a>` : ""}
+      </div>
+      ${d.site_note ? `<p class="muted" style="font-size:12px;margin:6px 0 0">Website ${esc(d.site_note)}.</p>` : ""}
+    </section>
+
+    <section class="panel dw-sec"><div class="sec-title" style="margin-bottom:8px"><h3 style="margin:0">Your CV for this job</h3>
+        <span style="display:flex;gap:6px;flex-wrap:wrap">
+          ${cv.pdf ? `<a class="btn small primary" href="/cv/${encodeURIComponent(cv.id)}.pdf" target="_blank" rel="noopener">${icon("file")} PDF to attach</a>` : ""}
+          <button class="btn small" id="dw-polish" title="Rephrase your bullets for this job with Claude (your own facts only)">${icon("wand")} ${cv.polished ? "Re-polish" : "Polish with Claude"}</button>
+          <button class="btn small" id="dw-edit">Open in builder</button></span></div>
+      <p class="muted" style="margin:0 0 8px">${cv.coverage != null ? `<b class="num">${esc((cv.matched || []).length)}/${esc(cv.terms_total)}</b> skills the posting asks for are on your CV (${esc(cv.coverage)}%)` : "No known skills detected in the posting"}${cv.polished ? " · polished" : ""}${cv.from_title ? " · tailored from the title (posting unreadable)" : ""}</p>
+      <div class="chips">${(cv.matched || []).map(t => `<span class="chip ok">${esc(t)}</span>`).join("")}${(cv.missing || []).map(t => `<span class="chip gap" title="Asked for, not in your profile">${esc(t)}</span>`).join("")}</div>
+      ${cv.pdf ? `<iframe class="dw-pdf" title="CV PDF" src="/cv/${encodeURIComponent(cv.id)}.pdf#toolbar=0&view=FitH"></iframe>` : `<iframe class="dw-pdf" title="CV" src="/cv/${encodeURIComponent(cv.id)}"></iframe>`}
+    </section>
+
+    <section class="panel dw-sec"><div class="sec-title" style="margin-bottom:8px"><h3 style="margin:0">The email to send</h3>
+        ${d.sent ? `<span class="tag ok">${icon("check")} sent ${esc(d.sent.on)}${d.sent.to ? " to " + esc(d.sent.to) : ""}</span>` : ""}</div>
+      <div class="stack" style="gap:10px">
+        <label>To<input id="dw-to" type="email" value="${esc(to)}" placeholder="recruiter@company.fr"></label>
+        <label>Subject<input id="dw-subject" value="${esc(draft.subject || "")}"></label>
+        <label>Message<textarea id="dw-body" rows="13" placeholder="Click “Write it with Claude” for a draft built from your profile and this posting">${esc(draft.body || "")}</textarea></label>
+        <div class="toolbar" style="margin:0">
+          <button class="btn" id="dw-write">${icon("wand")} ${draft.body ? "Rewrite" : "Write it"} with Claude</button>
+          <a class="btn primary" id="dw-mailto" href="#">${icon("send")} Open in my mail app</a>
+          <button class="btn" id="dw-copy">${icon("check")} Copy</button>
+          <button class="btn accent" id="dw-sent">Log as sent</button>
+        </div>
+        <p class="muted" id="dw-note" style="font-size:13px;margin:0">Your mail app opens with everything filled in - attach the CV PDF above, read it once, send.</p>
+      </div>
+    </section>
+
+    <section class="panel dw-sec"><details><summary><b>Job description</b> <span class="muted">(${esc((d.posting || "").length)} characters)</span></summary>
+      <div class="dw-posting">${esc(d.posting || "The posting could not be read - open it on the site.")}</div></details></section>`;
+
+  const updateMailto = () => {
+    $("#dw-mailto").setAttribute("href", `mailto:${encodeURIComponent($("#dw-to").value.trim())}?subject=${encodeURIComponent($("#dw-subject").value)}&body=${encodeURIComponent($("#dw-body").value)}`);
+  };
+  updateMailto();
+  ["#dw-to", "#dw-subject", "#dw-body"].forEach(s => $(s).addEventListener("input", () => {
+    updateMailto();
+    clearTimeout(SAVE_T);
+    SAVE_T = setTimeout(() => api("/api/outreach/save-draft", { key: DRAWER_KEY, to: $("#dw-to").value, subject: $("#dw-subject").value, body: $("#dw-body").value })
+      .then(() => { $("#dw-note").textContent = "Saved."; }).catch(() => {}), 700);
+  }));
+  document.querySelectorAll(".dw-alt").forEach(b => b.addEventListener("click", () => { $("#dw-to").value = b.dataset.email; $("#dw-to").dispatchEvent(new Event("input")); }));
+  $("#dw-write").addEventListener("click", writeInDrawer);
+  $("#dw-copy").addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText(`${$("#dw-subject").value}\n\n${$("#dw-body").value}`); toast("Copied"); }
+    catch (e) { toast("Select the text and copy it manually"); }
+  });
+  $("#dw-sent").addEventListener("click", async () => {
+    try { await api("/api/outreach/sent", { key: DRAWER_KEY, to: $("#dw-to").value.trim() }); toast(`Logged: ${o.company}`); load(); loadSendList(); openJob(DRAWER_KEY); }
+    catch (err) { toast(err.message); }
+  });
+  $("#dw-polish").addEventListener("click", () => prepareJob(true, true));
+  $("#dw-edit").addEventListener("click", () => { const k = DRAWER_KEY; closeJob(); const opp = oppByKey(k); if (opp) openBuilderFor(opp); });
+}
+
+async function prepareJob(rebuild, polish) {
+  const btn = document.getElementById(rebuild ? "dw-polish" : "dw-prepare");
+  if (btn) { btn.disabled = true; btn.innerHTML = `<span class="busy">${polish ? "Claude is polishing your CV and email…" : "Reading the posting, tailoring your CV, finding the recruiter…"}</span>`; }
+  try {
+    DRAWER = await api("/api/job/prepare", { key: DRAWER_KEY, rebuild: !!rebuild, polish: !!polish });
+    renderDrawer(); load(); loadSendList();
+  } catch (err) { toast(err.message); if (btn) btn.disabled = false; }
+}
+
+async function writeInDrawer() {
+  const btn = $("#dw-write");
+  btn.disabled = true;
+  $("#dw-note").innerHTML = `<span class="busy">Claude is writing from your profile and this posting…</span>`;
+  try {
+    const out = await api("/api/outreach/draft", { key: DRAWER_KEY, to: $("#dw-to").value.trim() });
+    $("#dw-subject").value = out.draft.subject; $("#dw-body").value = out.draft.body;
+    $("#dw-body").dispatchEvent(new Event("input"));
+    $("#dw-note").textContent = "Written - read it once and adjust anything you like.";
+  } catch (err) { toast(err.message); $("#dw-note").textContent = ""; }
+  finally { btn.disabled = false; }
+}
+
+$("#drawer-close").addEventListener("click", closeJob);
+$("#drawer-scrim").addEventListener("click", closeJob);
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && DRAWER_KEY) closeJob(); });
+
+// Clicking a job row (not its buttons or links) opens the drawer.
+function rowOpens(tableSel, attr, keyOf) {
+  $(tableSel).addEventListener("click", (e) => {
+    if (e.target.closest("button, a, input, select, textarea, label")) return;
+    const tr = e.target.closest(`tr[${attr}]`); if (!tr) return;
+    const key = keyOf(tr); if (key) openJob(key);
+  });
+}
+rowOpens("#opp-table", "data-o", (tr) => DATA.opportunities[Number(tr.dataset.o)]?.key);
+rowOpens("#send-table", "data-k", (tr) => tr.classList.contains("s-detail") ? null : tr.dataset.k);
 
 $("#ghost-days").value = store("tracker.ghost") || 21;
 const TABS = ["dashboard", "applications", "followups", "opportunities", "sendlist", "profile", "builder"];
@@ -1505,6 +1703,7 @@ Promise.all([load(), loadProfile(), loadSendList()]).then(() => {
   const qs = new URLSearchParams(location.search);
   const o = qs.get("opp") && oppByKey(qs.get("opp"));
   if (o) { if (qs.get("reach")) o._reach = true; openBuilderFor(o); }
+  if (qs.get("job")) openJob(qs.get("job"));
 }).catch(() => toast("Could not reach the tracker server - is it still running?"));
 setInterval(() => { if (document.visibilityState === "visible") load().catch(() => {}); }, 30000);
 

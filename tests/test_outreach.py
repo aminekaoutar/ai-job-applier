@@ -30,6 +30,11 @@ class Emails(unittest.TestCase):
         text = "Envoyez vos candidatures à freelance à insyco . fr avec un argumentaire. Rendez-vous à paris . fr"
         self.assertEqual(out.spelled_emails(text, "INSYCO"), {"freelance@insyco.fr"})
 
+    def test_error_reporting_accommodation_and_escaped_newline_addresses(self):
+        text = ('report 02332abd628d4483be4317c8483e3a2b@exceptions.doctolib.fr '
+                'accommodation@shift-technology.com "line\\ncontact@mon-consultant.com"')
+        self.assertEqual(out.emails_in(text), {"contact@mon-consultant.com"})
+
     def test_recruiting_addresses_rank_first(self):
         emails = ["contact@acme.fr", "jean@acme.fr", "recrutement@acme.fr"]
         self.assertEqual(sorted(emails, key=out.rank)[0], "recrutement@acme.fr")

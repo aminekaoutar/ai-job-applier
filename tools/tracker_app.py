@@ -427,7 +427,33 @@ def make_handler(tracker: Path, seen: Path, token: str, port_ref: dict, lock: th
         for o in read_opportunities(seen, pairs):
             if o["key"] == key:
                 return o
+        for o in read_opportunities(seen, set()):  # already applied: still viewable
+            if o["key"] == key:
+                return o
         raise ValueError("that job is no longer in the opportunities list")
+
+    def job_view(key: str) -> dict:
+        """The opportunity, its outreach record and the tailored CV's skill coverage."""
+        opp = find_opportunity(key)
+        opp = (with_match([opp], profile_dir) or [opp])[0]
+        rec = load_outreach(key)
+        cv = ps.load_tailored(rec["cv_id"], profile_dir) if rec.get("cv_id") else None
+        if cv is None:
+            item = next((t for t in ps.list_tailored(profile_dir) if t.get("opportunity") == key), None)
+            cv = ps.load_tailored(item["id"], profile_dir) if item else None
+        pdf_ok = bool(cv and (profile_dir / "tailored" / f"{cv['id']}.pdf").is_file())
+        return {
+            "opp": opp,
+            "contacts": rec.get("contacts"),
+            "site": rec.get("site") or rec.get("company_url"),
+            "site_note": rec.get("site_note"),
+            "draft": rec.get("draft"),
+            "sent": rec.get("sent"),
+            "posting": rec.get("posting") or "",
+            "cv": {k: cv.get(k) for k in ("id", "coverage", "matched", "missing", "terms_total", "polished", "language",
+                                          "from_title")} | {"pdf": pdf_ok} if cv else None,
+            "prepared": bool(cv) and rec.get("contacts") is not None,
+        }
 
     def send_list(full: bool = False) -> list[dict]:
         records = batch.Store(profile_dir).all()
@@ -525,6 +551,11 @@ def make_handler(tracker: Path, seen: Path, token: str, port_ref: dict, lock: th
                 return self._json(HTTPStatus.OK, search_job.status())
             if url.path == "/api/batch/status":
                 return self._json(HTTPStatus.OK, batch_job.status())
+            if url.path == "/api/job":
+                try:
+                    return self._json(HTTPStatus.OK, job_view(str(qs.get("key", [""])[0])))
+                except ValueError as exc:
+                    return self._json(HTTPStatus.NOT_FOUND, {"error": str(exc)})
             if url.path == "/api/sendlist":
                 return self._json(HTTPStatus.OK, {"rows": send_list()})
             if url.path == "/api/sendlist.csv":
@@ -680,6 +711,28 @@ def make_handler(tracker: Path, seen: Path, token: str, port_ref: dict, lock: th
                     polish_top=int(body.get("polish_top") or 0), drafts=bool(body.get("drafts", True))))
                 return self._json(HTTPStatus.OK if started else HTTPStatus.CONFLICT,
                                   {"started": started, "jobs": len(opps), **batch_job.status()})
+
+            if path == "/api/job/prepare":
+                key = str(body.get("key") or "")
+                opp = (with_match([find_opportunity(key)], profile_dir) or [None])[0]
+                if body.get("rebuild"):
+                    rec = load_outreach(key)
+                    for k in ("cv_id", "pdf", "contacts", "draft"):
+                        rec.pop(k, None)
+                    save_outreach(key, rec)
+                batch.prepare_all([opp], profile_dir, force=bool(body.get("rebuild")),
+                                  polish_top=1 if body.get("polish") else 0, drafts=True)
+                return self._json(HTTPStatus.OK, job_view(key))
+
+            if path == "/api/outreach/save-draft":
+                key = str(body.get("key") or "")
+                find_opportunity(key)
+                rec = load_outreach(key)
+                rec["draft"] = {**(rec.get("draft") or {}), "to": str(body.get("to") or "")[:200],
+                                "subject": str(body.get("subject") or "")[:300], "body": str(body.get("body") or "")[:8000],
+                                "edited": True}
+                save_outreach(key, rec)
+                return self._json(HTTPStatus.OK, {"ok": True})
 
             if path == "/api/outreach/contacts":
                 opp = find_opportunity(str(body.get("key") or ""))

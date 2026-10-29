@@ -39,7 +39,7 @@ GUESS_PATHS = ["/contact", "/nous-contacter", "/contactez-nous", "/recrutement",
                "/mentions-legales", "/legal", "/a-propos"]
 RECRUIT = re.compile(r"^(recrut|recruit|rh|hr|drh|jobs?|careers?|carrieres?|talents?|candidat|emploi|join|rejoindre|staffing|sourcing)", re.I)
 GENERIC = re.compile(r"^(contact|info|hello|bonjour|accueil|commercial|sales|admin|office|team|equipe)", re.I)
-JUNK = re.compile(r"(noreply|no-reply|donotreply|example\.|sentry|wixpress|godaddy|\.png$|\.jpe?g$|\.gif$|\.svg$|\.webp$|@2x|privacy|dpo|rgpd|gdpr|abuse|webmaster|postmaster|support@)", re.I)
+JUNK = re.compile(r"(^[0-9a-f]{16,}@|@exceptions\.|@errors?\.|accommodation|accessibilit|noreply|no-reply|donotreply|example\.|sentry|wixpress|godaddy|\.png$|\.jpe?g$|\.gif$|\.svg$|\.webp$|@2x|privacy|dpo|rgpd|gdpr|abuse|webmaster|postmaster|support@)", re.I)
 
 
 def _fetch(url: str, timeout: int = 15) -> tuple[str, str]:
@@ -64,7 +64,8 @@ def registrable(host: str) -> str:
 
 
 def emails_in(markup: str) -> set[str]:
-    text = html.unescape(markup)
+    # Escaped line breaks inside scripts/JSON ("\ncontact@...") would glue an "n" onto the address.
+    text = re.sub(r"\\[nrt]", " ", html.unescape(markup))
     found = {m.group(0) for m in EMAIL.finditer(text)}
     found |= {f"{a}@{b}.{c}" for a, b, c in OBFUSCATED.findall(text)}
     found |= {urllib.parse.unquote(m) for m in re.findall(r'mailto:([^"\'?>\s]+)', markup, re.I)}
