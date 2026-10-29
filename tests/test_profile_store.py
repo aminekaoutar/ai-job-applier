@@ -169,8 +169,8 @@ class Tailoring(unittest.TestCase):
 
     def test_reports_gaps_and_never_adds_them(self):
         cv = ps.tailor(sample_profile(), self.POSTING, "AI Engineer", "Acme")
-        self.assertIn("terraform", cv["missing"])
-        self.assertIn("rag", cv["matched"])
+        self.assertIn("Terraform", cv["missing"])
+        self.assertIn("RAG", cv["matched"])
         self.assertNotIn("Terraform", " ".join(cv["skills"]))
         self.assertEqual(cv["language"], "French")
         self.assertEqual(cv["basics"]["headline"], "Ingénieure IA / LLM")  # own headline, not the job title

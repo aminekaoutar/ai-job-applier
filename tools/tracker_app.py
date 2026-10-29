@@ -43,6 +43,7 @@ from urllib.parse import parse_qs, urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from rank_state import STATE, TRACKER, norm  # noqa: E402
+import github_import  # noqa: E402
 import job_finder  # noqa: E402
 import profile_store as ps  # noqa: E402
 
@@ -276,7 +277,14 @@ def snapshot(tracker: Path, seen: Path, today: date, ghost_days: int, profile_di
 
 
 def with_match(opps: list[dict], profile_dir: Path | None) -> list[dict]:
-    """Score each opportunity's title against the profile, best match first."""
+    """Score each opportunity's title against the profile (best first) and link CVs built for it."""
+    if profile_dir:
+        cvs = {}
+        for cv in reversed(ps.list_tailored(profile_dir)):  # oldest first, so the newest wins
+            if cv.get("opportunity"):
+                cvs[cv["opportunity"]] = {"id": cv["id"], "coverage": cv["coverage"]}
+        for o in opps:
+            o["cv"] = cvs.get(o["key"])
     profile = ps.load_profile(profile_dir) if profile_dir else None
     if not profile or not ps.has_content(profile):
         return opps
@@ -333,6 +341,7 @@ def apply_edit(tracker: Path, version: str, action: str, payload: dict, today: d
             "source": clean_field(payload.get("source")),
             "deadline": clean_field(payload.get("deadline")),
             "notes": clean_field(payload.get("notes")),
+            "cv_file": clean_field(payload.get("cv_file")),
         })
         if row["date"] and not parse_day(row["date"]):
             raise ValueError("date must be YYYY-MM-DD")
@@ -407,6 +416,28 @@ def make_handler(tracker: Path, seen: Path, token: str, port_ref: dict, lock: th
                  profile_dir: Path = ps.PROFILE_DIR):
     search_job = SearchJob()
     profile_lock = threading.Lock()
+    github_cache = {}  # username -> repos fetched by /api/github/repos
+
+    def find_opportunity(key: str) -> dict:
+        _, rows, _ = read_tracker(tracker)
+        pairs = {(norm(r.get("company")), norm(r.get("role"))) for r in rows if norm(r.get("company"))}
+        for o in read_opportunities(seen, pairs):
+            if o["key"] == key:
+                return o
+        raise ValueError("that job is no longer in the opportunities list")
+
+    def build_cv(profile: dict, posting: str, body: dict, opp: dict | None) -> dict:
+        cv = ps.tailor(profile, posting, str(body.get("job_title") or (opp or {}).get("title") or ""),
+                       str(body.get("company") or (opp or {}).get("company") or ""),
+                       max_bullets=int(body.get("max_bullets") or 4), max_projects=int(body.get("max_projects") or 3),
+                       include_photo=bool(body.get("include_photo", True)))
+        if str(body.get("headline") or "").strip():
+            cv["basics"]["headline"] = str(body["headline"]).strip()
+        if opp:
+            cv["opportunity"] = {"key": opp["key"], "url": opp["url"], "portal": opp["portal"]}
+        if body.get("polish"):
+            cv = ps.polish(cv, profile, int(body.get("max_bullets") or 4))
+        return ps.save_tailored(cv, profile_dir)
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "tracker-app"
@@ -550,16 +581,53 @@ def make_handler(tracker: Path, seen: Path, token: str, port_ref: dict, lock: th
                 posting = str(body.get("posting") or "")
                 if len(posting.strip()) < 30:
                     raise ValueError("paste the job description (or fetch it) first")
-                cv = ps.tailor(profile, posting, str(body.get("job_title") or ""), str(body.get("company") or ""),
-                               max_bullets=int(body.get("max_bullets") or 4), max_projects=int(body.get("max_projects") or 3),
-                               include_photo=bool(body.get("include_photo", True)))
-                if str(body.get("headline") or "").strip():
-                    cv["basics"]["headline"] = str(body["headline"]).strip()
-                if body.get("polish"):
-                    cv = ps.polish(cv, profile, int(body.get("max_bullets") or 4))
-                cv = ps.save_tailored(cv, profile_dir)
+                opp = find_opportunity(str(body["opportunity"])) if body.get("opportunity") else None
+                cv = build_cv(profile, posting, body, opp)
                 return self._json(HTTPStatus.OK, {"cv": {k: v for k, v in cv.items() if k != "posting"},
                                                   "tailored": ps.list_tailored(profile_dir)})
+
+            if path == "/api/cv/for-opportunity":
+                profile = ps.load_profile(profile_dir)
+                if not ps.has_content(profile):
+                    raise ValueError("add your CV on the Profile tab first")
+                opp = find_opportunity(str(body.get("key") or ""))
+                posting = job_finder.fetch_posting(opp["url"])
+                if len(posting.strip()) < 30:
+                    # Indeed, Welcome to the Jungle, HelloWork: the page has to be pasted.
+                    return self._json(HTTPStatus.OK, {"need_paste": True, "opportunity": opp})
+                cv = build_cv(profile, posting, body, opp)
+                return self._json(HTTPStatus.OK, {"cv": {k: v for k, v in cv.items() if k != "posting"},
+                                                  "posting": posting, "tailored": ps.list_tailored(profile_dir)})
+
+            if path == "/api/github/repos":
+                user = github_import.username_from(str(body.get("user") or ""))
+                try:
+                    repos = github_import.fetch_repos(user, cache_dir=profile_dir / "cache")
+                except github_import.GitHubError as exc:
+                    raise ValueError(str(exc)) from exc
+                github_cache[user.lower()] = repos
+                known = {p["url"].rstrip("/").lower() for p in ps.load_profile(profile_dir)["projects"] if p.get("url")}
+                return self._json(HTTPStatus.OK, {"user": user, "repos": [
+                    {k: r[k] for k in ("repo", "name", "url", "description", "skills", "stars", "pushed", "has_content")}
+                    | {"excerpt": r["readme"][:280], "in_profile": r["url"].rstrip("/").lower() in known}
+                    for r in repos]})
+
+            if path == "/api/github/import":
+                user = github_import.username_from(str(body.get("user") or ""))
+                repos = github_cache.get(user.lower())
+                if repos is None:
+                    raise ValueError("load the repositories first")
+                wanted = set(body.get("repos") or [])
+                chosen = [r for r in repos if r["repo"] in wanted]
+                if not chosen:
+                    raise ValueError("pick at least one repository")
+                with profile_lock:
+                    profile = ps.load_profile(profile_dir)
+                    language = ps.detect_language(ps.profile_text(profile)) if ps.has_content(profile) else "French"
+                    projects, warnings = github_import.to_projects(chosen, body.get("method") == "claude", language)
+                    profile, counts = github_import.merge_into_profile(profile, projects, user)
+                    ps.save_profile(profile, profile_dir)
+                return self._json(HTTPStatus.OK, {**self._profile_payload(), "github": counts, "warnings": warnings})
 
             if path == "/api/cv/delete":
                 cv_id = str(body.get("id") or "")

@@ -60,7 +60,7 @@ VOCAB = [
     "faiss", "pgvector", "evaluation", "guardrails", "llmops", "mlops", "machine learning",
     "deep learning", "nlp", "computer vision", "speech recognition", "ocr", "time series",
     "recommender systems", "reinforcement learning", "statistics", "data science", "data engineering",
-    "data analysis", "data visualization", "power bi", "tableau", "excel", "streamlit", "gradio",
+    "data analysis", "data visualization", "power bi", "excel", "streamlit", "gradio",
     "fastapi", "flask", "django", "spring", "rest api", "graphql", "microservices", "c++", "c#", ".net",
     "golang", "rust", "scala", "matlab", "swift", "kotlin", "flutter", "agile", "scrum", "jira",
     "devops", "cybersecurity", "security", "networking", "firewall", "vpn", "infrastructure", "gpu",
@@ -83,11 +83,48 @@ SYNONYMS = {
     "github copilot": "copilot", "chatgpt": "gpt", "gpt-4": "gpt", "gpt-4o": "gpt",
     "science des donnees": "data science", "ingenierie des donnees": "data engineering",
     "analyse de donnees": "data analysis", "fine tuning": "fine-tuning", "finetuning": "fine-tuning",
+    "tableau software": "tableau", "tableau desktop": "tableau",  # bare "tableau" is just French for "table"
     "cybersecurite": "cybersecurity", "securite": "security", "reseau": "networking", "reseaux": "networking",
     "pare-feu": "firewall", "infrastructures": "infrastructure", "on premise": "on-premise", "gpus": "gpu",
     "anglais": "english", "francais": "french", "allemand": "german", "espagnol": "spanish", "arabe": "arabic",
 }
 # Words naming the kind of job (not its domain: IA/LLM/data are skill terms above).
+# How vocabulary terms are written on a CV (terms not listed keep their own spelling).
+DISPLAY = {
+    "python": "Python", "java": "Java", "javascript": "JavaScript", "typescript": "TypeScript", "react": "React",
+    "next.js": "Next.js", "vue": "Vue", "angular": "Angular", "node.js": "Node.js", "html": "HTML", "css": "CSS",
+    "tailwind": "Tailwind", "sql": "SQL", "nosql": "NoSQL", "postgresql": "PostgreSQL", "mysql": "MySQL",
+    "mongodb": "MongoDB", "redis": "Redis", "kafka": "Kafka", "docker": "Docker", "kubernetes": "Kubernetes",
+    "terraform": "Terraform", "linux": "Linux", "git": "Git", "ci/cd": "CI/CD", "github actions": "GitHub Actions",
+    "gitlab": "GitLab", "aws": "AWS", "azure": "Azure", "gcp": "GCP", "bedrock": "AWS Bedrock",
+    "vertex ai": "Vertex AI", "azure openai": "Azure OpenAI", "databricks": "Databricks", "spark": "Spark",
+    "airflow": "Airflow", "mlflow": "MLflow", "pytorch": "PyTorch", "tensorflow": "TensorFlow", "keras": "Keras",
+    "xgboost": "XGBoost", "opencv": "OpenCV", "yolo": "YOLO", "hugging face": "Hugging Face",
+    "transformers": "Transformers", "langchain": "LangChain", "langgraph": "LangGraph", "llamaindex": "LlamaIndex",
+    "crewai": "CrewAI", "autogen": "AutoGen", "openai": "OpenAI", "gpt": "GPT", "claude": "Claude",
+    "claude code": "Claude Code", "anthropic": "Anthropic", "mistral": "Mistral", "llama": "Llama",
+    "gemini": "Gemini", "copilot": "Copilot", "llm": "LLM", "generative ai": "Generative AI", "rag": "RAG",
+    "mcp": "MCP", "ai agents": "AI agents", "agentic ai": "Agentic AI", "multi-agent": "Multi-agent systems",
+    "prompt engineering": "Prompt engineering", "fine-tuning": "Fine-tuning", "lora": "LoRA",
+    "embeddings": "Embeddings", "vector database": "Vector databases", "pinecone": "Pinecone", "qdrant": "Qdrant",
+    "chroma": "Chroma", "faiss": "FAISS", "pgvector": "pgvector", "llmops": "LLMOps", "mlops": "MLOps",
+    "machine learning": "Machine learning", "deep learning": "Deep learning", "nlp": "NLP",
+    "computer vision": "Computer vision", "ocr": "OCR", "data science": "Data science",
+    "data analysis": "Data analysis", "data visualization": "Data visualization", "power bi": "Power BI",
+    "tableau": "Tableau", "excel": "Excel", "streamlit": "Streamlit", "gradio": "Gradio", "fastapi": "FastAPI",
+    "flask": "Flask", "django": "Django", "rest api": "REST APIs", "graphql": "GraphQL", "pandas": "pandas",
+    "numpy": "NumPy", "scikit-learn": "scikit-learn", "rabbitmq": "RabbitMQ", "microservices": "Microservices",
+    "elasticsearch": "Elasticsearch", "spring": "Spring", "matlab": "MATLAB", "golang": "Go", "rust": "Rust",
+}
+# Terms that say nothing on their own in a skills list.
+GENERIC_TERMS = {"api", "cloud", "evaluation", "infrastructure", "networking", "security", "english", "french",
+                 "german", "spanish", "arabic", "big data", "etl", "devops", "on-premise", "gpu", "statistics"}
+
+
+def display_term(term: str) -> str:
+    return DISPLAY.get(term) or (term[:1].upper() + term[1:])
+
+
 ROLE_WORDS = {
     "engineer", "ingenieur", "developer", "developpeur", "dev", "scientist", "architect", "architecte",
     "consultant", "lead", "manager", "analyst", "analyste", "researcher", "chercheur", "intern",
@@ -801,7 +838,7 @@ def detect_language(text: str) -> str:
 
 
 def tailor(profile: dict, posting: str, job_title: str = "", company: str = "",
-           max_bullets: int = 4, max_projects: int = 3, include_photo: bool = True) -> dict:
+           max_bullets: int = 4, max_projects: int = 3, include_photo: bool = True, max_skills: int = 18) -> dict:
     jd = f"{job_title}\n{posting}"
     jd_list = posting_terms(jd)
     jd_terms = set(jd_list)
@@ -823,10 +860,11 @@ def tailor(profile: dict, posting: str, job_title: str = "", company: str = "",
 
     skills = profile["skills"] or sorted(have)
     matched_skills = [s for s in skills if terms_in(s) & jd_terms or fold(s) in jd_terms]
-    skills = matched_skills + [s for s in skills if s not in matched_skills]
+    # The posting's skills first, then the rest, capped: a CV skills line is a summary, not an inventory.
+    skills = (matched_skills + [s for s in skills if s not in matched_skills])[:max_skills]
 
-    matched = [t for t in jd_list if t in have]
-    missing = [t for t in jd_list if t not in have]
+    matched = [display_term(t) for t in jd_list if t in have]
+    missing = [display_term(t) for t in jd_list if t not in have]
     # The headline stays the candidate's own: a target job title there reads as a title they held.
     headline = profile["basics"]["headline"] or job_title.strip()
     summary = profile["basics"]["summary"]
@@ -910,7 +948,9 @@ def list_tailored(base: Path = PROFILE_DIR) -> list[dict]:
             cv = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
-        out.append({k: cv.get(k) for k in ("id", "created", "job_title", "company", "coverage", "polished")})
+        item = {k: cv.get(k) for k in ("id", "created", "job_title", "company", "coverage", "polished")}
+        item["opportunity"] = (cv.get("opportunity") or {}).get("key")
+        out.append(item)
     return out
 
 
@@ -925,6 +965,8 @@ LABELS = {
 
 
 def _dates(a: str, b: str) -> str:
+    if a and a == b:
+        return a
     return " – ".join(x for x in (a, b) if x)
 
 
@@ -941,7 +983,7 @@ def render_cv(cv: dict, photo_url: str | None) -> str:
 @page {{ size: A4; margin: 14mm 14mm; }}
 * {{ box-sizing: border-box; }}
 body {{ margin: 0; background: #e9ecef; color: #1d232b; font: 10.5pt/1.42 "Helvetica Neue", Arial, sans-serif; }}
-.page {{ width: 210mm; min-height: 297mm; margin: 16px auto; background: #fff; padding: 14mm; box-shadow: 0 2px 12px rgba(0,0,0,.12); }}
+.page {{ width: 210mm; max-width: calc(100% - 24px); min-height: 297mm; margin: 12px auto; background: #fff; padding: 14mm; box-shadow: 0 2px 12px rgba(0,0,0,.12); }}
 header {{ display: flex; gap: 16px; align-items: center; border-bottom: 2px solid #1f4e79; padding-bottom: 10px; margin-bottom: 10px; }}
 header img {{ width: 30mm; height: 30mm; object-fit: cover; border-radius: 50%; }}
 h1 {{ margin: 0; font-size: 21pt; letter-spacing: .01em; }}

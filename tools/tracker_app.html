@@ -3,283 +3,481 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Application Tracker</title>
+<title>Job Search Tracker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@500;600;700&family=Fira+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
+/* Design system: ui-ux-pro-max "Data-Dense Dashboard" - navy/blue data, amber highlights,
+   Fira Sans text, Fira Code numbers. Semantic tokens only; components never use raw hex. */
 :root {
-  --bg: #f6f7f9; --panel: #ffffff; --ink: #18202b; --muted: #637083; --line: #e3e7ed;
-  --accent: #2563eb; --shadow: 0 1px 2px rgba(16,24,40,.06), 0 1px 3px rgba(16,24,40,.08);
-  --c-responded: #16a34a; --c-waiting: #3b82f6; --c-ghosted: #9ca3af; --c-withdrawn: #a16207;
-  --c-not_sent: #64748b; --c-unknown: #ef4444;
-  --s-drafted: #64748b; --s-applied: #3b82f6; --s-interview: #f59e0b; --s-offer: #8b5cf6;
-  --s-hired: #16a34a; --s-rejected: #ef4444; --s-no_response: #9ca3af; --s-offer_declined: #0d9488; --s-withdrawn: #a16207;
+  --primary: #1E40AF; --primary-2: #3B82F6; --on-primary: #FFFFFF;
+  --accent: #D97706; --accent-soft: #FEF3C7;
+  --bg: #F8FAFC; --bg-grad: radial-gradient(1200px 600px at 100% -10%, #DBEAFE 0%, transparent 55%), radial-gradient(900px 500px at -10% 110%, #FEF3C7 0%, transparent 50%);
+  --card: #FFFFFF; --fg: #0F172A; --heading: #1E3A8A; --muted: #475569; --muted-bg: #EEF2F8;
+  --line: #E2E8F0; --line-blue: #DBEAFE; --ring: rgba(30, 64, 175, .35);
+  --danger: #DC2626; --success: #15803D;
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, .06);
+  --shadow: 0 1px 3px rgba(15, 23, 42, .08), 0 8px 24px -12px rgba(30, 64, 175, .18);
+  --sidebar: #0F1B3D; --sidebar-fg: #C7D2FE; --sidebar-active: rgba(255,255,255,.10);
+  --c-responded: #16A34A; --c-waiting: #3B82F6; --c-ghosted: #94A3B8; --c-withdrawn: #A16207;
+  --c-not_sent: #64748B; --c-unknown: #DC2626;
+  --s-drafted: #64748B; --s-applied: #3B82F6; --s-interview: #D97706; --s-offer: #7C3AED;
+  --s-hired: #16A34A; --s-rejected: #DC2626; --s-no_response: #94A3B8; --s-offer_declined: #0D9488; --s-withdrawn: #A16207;
+  --radius: 14px; --radius-sm: 10px;
+  --ease: cubic-bezier(.2, .8, .2, 1);
+  --font: "Fira Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: "Fira Code", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+:root[data-theme="dark"] {
+  --primary: #3B82F6; --primary-2: #60A5FA; --on-primary: #FFFFFF;
+  --accent: #F59E0B; --accent-soft: rgba(245, 158, 11, .14);
+  --bg: #0A1120; --bg-grad: radial-gradient(1200px 600px at 100% -10%, rgba(59,130,246,.16) 0%, transparent 55%), radial-gradient(900px 500px at -10% 110%, rgba(245,158,11,.08) 0%, transparent 50%);
+  --card: #111A2E; --fg: #E2E8F0; --heading: #BFDBFE; --muted: #94A3B8; --muted-bg: #17223A;
+  --line: #1F2B45; --line-blue: #1E3A8A; --ring: rgba(96, 165, 250, .45);
+  --shadow-sm: none; --shadow: 0 1px 0 rgba(255,255,255,.03) inset, 0 10px 30px -18px rgba(0,0,0,.8);
+  --sidebar: #070D1A; --sidebar-fg: #A5B4FC; --sidebar-active: rgba(96,165,250,.14);
+  --c-ghosted: #64748B; --s-no_response: #64748B;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #0f141a; --panel: #171e27; --ink: #e6ebf1; --muted: #93a1b3; --line: #273241;
-    --shadow: none; --c-ghosted: #6b7280; --s-no_response: #6b7280;
+    --primary: #3B82F6; --primary-2: #60A5FA; --accent: #F59E0B; --accent-soft: rgba(245, 158, 11, .14);
+    --bg: #0A1120; --bg-grad: radial-gradient(1200px 600px at 100% -10%, rgba(59,130,246,.16) 0%, transparent 55%), radial-gradient(900px 500px at -10% 110%, rgba(245,158,11,.08) 0%, transparent 50%);
+    --card: #111A2E; --fg: #E2E8F0; --heading: #BFDBFE; --muted: #94A3B8; --muted-bg: #17223A;
+    --line: #1F2B45; --line-blue: #1E3A8A; --ring: rgba(96, 165, 250, .45);
+    --shadow-sm: none; --shadow: 0 1px 0 rgba(255,255,255,.03) inset, 0 10px 30px -18px rgba(0,0,0,.8);
+    --sidebar: #070D1A; --sidebar-fg: #A5B4FC; --sidebar-active: rgba(96,165,250,.14);
+    --c-ghosted: #64748B; --s-no_response: #64748B;
   }
 }
 * { box-sizing: border-box; }
-body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; padding: 16px 24px; background: var(--panel); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 2; }
-h1 { font-size: 18px; margin: 0; }
-h2 { font-size: 15px; margin: 0 0 12px; }
-h3 { font-size: 13px; margin: 0 0 10px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .03em; }
-nav { display: flex; gap: 4px; flex-wrap: wrap; }
-nav button { border: 0; background: none; color: var(--muted); padding: 8px 12px; border-radius: 8px; font: inherit; cursor: pointer; }
-nav button[aria-selected="true"] { background: var(--bg); color: var(--ink); font-weight: 600; }
-.badge-count { display: inline-block; min-width: 18px; padding: 0 6px; margin-left: 4px; border-radius: 9px; background: #f59e0b; color: #fff; font-size: 11px; font-weight: 700; text-align: center; }
-main { padding: 20px 24px 40px; max-width: 1280px; margin: 0 auto; }
+html, body { height: 100%; }
+body { margin: 0; background: var(--bg); background-image: var(--bg-grad); background-attachment: fixed; color: var(--fg); font: 15px/1.5 var(--font); -webkit-font-smoothing: antialiased; }
+svg.i { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+a { color: var(--primary); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+code { font-family: var(--mono); font-size: .88em; background: var(--muted-bg); padding: 1px 5px; border-radius: 5px; }
+.num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+h1, h2, h3 { color: var(--heading); margin: 0; letter-spacing: -.01em; }
+h2 { font-size: 16px; font-weight: 600; }
+h3 { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-bottom: 12px; }
 .muted { color: var(--muted); }
-.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); gap: 12px; margin-bottom: 16px; }
-.card { background: var(--panel); border-radius: 10px; box-shadow: var(--shadow); border: 1px solid var(--line); padding: 14px 16px; border-left: 4px solid var(--k, var(--accent)); }
-.card .n { font-size: 26px; font-weight: 700; }
-.card .l { color: var(--muted); font-size: 12px; }
-.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 12px; margin-bottom: 16px; }
-.panel { background: var(--panel); border-radius: 10px; box-shadow: var(--shadow); border: 1px solid var(--line); padding: 16px; min-width: 0; }
-.legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 8px; font-size: 12px; color: var(--muted); }
-.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
-svg text { fill: var(--ink); font: 12px system-ui, sans-serif; }
-svg .axis { fill: var(--muted); font-size: 11px; }
-.toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
-input, select, textarea { font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; }
-button.btn { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 8px; padding: 6px 11px; cursor: pointer; }
-button.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-button.btn.small { padding: 3px 8px; font-size: 12px; }
-.table-wrap { overflow-x: auto; }
-table { width: 100%; border-collapse: collapse; }
-th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
-th { font-size: 12px; color: var(--muted); font-weight: 600; white-space: nowrap; }
-tr:hover td { background: color-mix(in srgb, var(--bg) 60%, transparent); }
-.pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; color: #fff; background: var(--pc, #64748b); white-space: nowrap; }
-.notes { max-width: 320px; color: var(--muted); font-size: 12px; white-space: normal; }
-a { color: var(--accent); }
-.empty { padding: 28px; text-align: center; color: var(--muted); }
-form.add { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px; align-items: end; }
-form.add label { display: grid; gap: 3px; font-size: 12px; color: var(--muted); }
-.toast { position: fixed; bottom: 18px; right: 18px; background: var(--ink); color: var(--bg); padding: 10px 14px; border-radius: 8px; opacity: 0; transition: opacity .2s; pointer-events: none; max-width: 360px; }
-.toast.show { opacity: 1; }
 .hidden { display: none !important; }
-.chips { display: flex; flex-wrap: wrap; gap: 5px; }
-.chip { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12px; border: 1px solid var(--line); background: var(--bg); }
-.chip.ok { border-color: color-mix(in srgb, var(--c-responded) 50%, transparent); color: var(--c-responded); }
-.chip.gap { border-color: color-mix(in srgb, #f59e0b 50%, transparent); color: #b45309; }
-.profile-grid { display: grid; grid-template-columns: minmax(260px, 320px) 1fr; gap: 12px; align-items: start; }
-@media (max-width: 900px) { .profile-grid { grid-template-columns: 1fr; } }
-.stack { display: grid; gap: 8px; }
-.stack label, .fields label { display: grid; gap: 3px; font-size: 12px; color: var(--muted); }
-.stack label.check { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+:focus-visible { outline: 3px solid var(--ring); outline-offset: 2px; border-radius: 8px; }
+
+/* ---------- shell ---------- */
+.app { display: grid; grid-template-columns: 248px 1fr; min-height: 100%; }
+.sidebar { position: sticky; top: 0; height: 100vh; background: var(--sidebar); color: var(--sidebar-fg); display: flex; flex-direction: column; padding: 18px 14px; gap: 18px; }
+.brand { display: flex; align-items: center; gap: 10px; padding: 4px 8px; color: #fff; }
+.brand .logo { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; background: linear-gradient(135deg, #3B82F6, #1E40AF 60%, #D97706); box-shadow: 0 6px 18px -6px rgba(59,130,246,.7); }
+.brand b { display: block; font-size: 15px; }
+.brand span { font-size: 12px; color: var(--sidebar-fg); }
+nav { display: grid; gap: 4px; }
+nav button { display: flex; align-items: center; gap: 12px; width: 100%; border: 0; background: none; color: var(--sidebar-fg); padding: 10px 12px; min-height: 42px; border-radius: 10px; font: 500 14px var(--font); cursor: pointer; text-align: left; transition: background .15s var(--ease), color .15s var(--ease); }
+nav button:hover { background: rgba(255,255,255,.06); color: #fff; }
+nav button[aria-selected="true"] { background: var(--sidebar-active); color: #fff; box-shadow: inset 3px 0 0 #60A5FA; }
+nav .count { margin-left: auto; font: 600 11px var(--mono); padding: 1px 8px; border-radius: 999px; background: rgba(255,255,255,.10); color: #fff; }
+nav .count.hot { background: var(--accent); color: #111; }
+nav .count:empty { display: none; }
+.nav-label { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: rgba(199,210,254,.55); padding: 6px 12px 0; }
+.me { margin-top: auto; display: flex; align-items: center; gap: 10px; padding: 10px; border-radius: 12px; background: rgba(255,255,255,.05); }
+.me img, .me .avatar { width: 38px; height: 38px; border-radius: 50%; object-fit: cover; flex: none; }
+.me b { display: block; color: #fff; font-size: 13px; line-height: 1.2; }
+.me span { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; max-width: 140px; }
+.theme-btn { border: 0; background: rgba(255,255,255,.08); color: #fff; width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; cursor: pointer; margin-left: auto; transition: background .15s var(--ease); }
+.theme-btn:hover { background: rgba(255,255,255,.16); }
+.main { min-width: 0; display: flex; flex-direction: column; }
+.topbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 22px 32px 6px; }
+.topbar h1 { font-size: 24px; font-weight: 700; }
+.topbar p { margin: 2px 0 0; color: var(--muted); font-size: 14px; }
+.top-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+main { padding: 16px 32px 48px; max-width: 1440px; width: 100%; }
+
+/* ---------- surfaces ---------- */
+.panel { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: 18px; min-width: 0; }
+.panel + .panel { margin-top: 0; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 16px; margin-bottom: 16px; }
+.sec-title { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.empty { padding: 32px 16px; text-align: center; color: var(--muted); }
+.empty svg.i { width: 36px; height: 36px; color: var(--primary-2); margin-bottom: 8px; }
+.warn { background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); color: var(--fg); padding: 10px 14px; border-radius: var(--radius-sm); margin: 8px 0; font-size: 14px; }
+
+/* ---------- hero + KPIs ---------- */
+.hero { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; padding: 20px 22px; margin-bottom: 16px; border-radius: var(--radius); color: #fff; background: linear-gradient(120deg, #1E3A8A 0%, #1E40AF 45%, #2563EB 75%, #D97706 140%); box-shadow: 0 18px 40px -24px rgba(30,64,175,.8); }
+.hero h2 { color: #fff; font-size: 20px; }
+.hero p { margin: 4px 0 0; color: #DBEAFE; }
+.hero .hero-stats { display: flex; gap: 10px; flex-wrap: wrap; }
+.hero .hs { background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.18); border-radius: 12px; padding: 10px 14px; min-width: 120px; cursor: pointer; color: #fff; text-align: left; font: inherit; transition: background .15s var(--ease), transform .15s var(--ease); }
+.hero .hs:hover { background: rgba(255,255,255,.2); transform: translateY(-1px); }
+.hero .hs b { display: block; font: 700 22px var(--mono); }
+.hero .hs span { font-size: 12px; color: #DBEAFE; }
+.cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
+@media (max-width: 1100px) { .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+#chart-response svg { max-width: 460px; display: block; margin: 0 auto; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow-sm); padding: 14px 16px; display: flex; gap: 12px; align-items: center; transition: transform .15s var(--ease), box-shadow .15s var(--ease); }
+.card:hover { transform: translateY(-2px); box-shadow: var(--shadow); }
+.card .ic { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; flex: none; color: var(--k); background: color-mix(in srgb, var(--k) 14%, transparent); }
+.card .n { font: 700 24px/1.1 var(--mono); color: var(--fg); }
+.card .l { color: var(--muted); font-size: 13px; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 10px; font-size: 12px; color: var(--muted); }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+svg text { fill: var(--fg); font: 12px var(--font); }
+svg .axis { fill: var(--muted); font-size: 11px; }
+
+/* ---------- controls ---------- */
+.toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
+input, select, textarea { font: inherit; font-size: 14px; color: var(--fg); background: var(--card); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 8px 11px; min-height: 38px; transition: border-color .15s var(--ease), box-shadow .15s var(--ease); }
+input:hover, select:hover, textarea:hover { border-color: color-mix(in srgb, var(--primary-2) 40%, var(--line)); }
+input:focus, select:focus, textarea:focus { outline: none; border-color: var(--primary-2); box-shadow: 0 0 0 3px var(--ring); }
+input[type=checkbox], input[type=radio] { min-height: 0; width: 16px; height: 16px; accent-color: var(--primary); }
 input[type=file] { max-width: 100%; }
-.stack, .builder > *, .profile-grid > * { min-width: 0; }
-.stack label:not(.check) > input, .stack label > select, .stack label > textarea,
-.fields label > input, .fields label > select { width: 100%; min-width: 0; }
+textarea { width: 100%; min-height: 80px; resize: vertical; line-height: 1.5; }
+.search { position: relative; flex: 1; min-width: 220px; }
+.search svg.i { position: absolute; left: 11px; top: 50%; transform: translateY(-50%); color: var(--muted); width: 16px; height: 16px; }
+.search input { width: 100%; padding-left: 34px; }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 7px; font: 500 14px var(--font); border: 1px solid var(--line); background: var(--card); color: var(--fg); border-radius: var(--radius-sm); padding: 7px 13px; min-height: 38px; cursor: pointer; text-decoration: none; white-space: nowrap; transition: background .15s var(--ease), border-color .15s var(--ease), transform .1s var(--ease), box-shadow .15s var(--ease); }
+.btn:hover { border-color: var(--primary-2); color: var(--primary); }
+.btn:active { transform: translateY(1px); }
+.btn:disabled { opacity: .55; cursor: not-allowed; }
+.btn.primary { background: linear-gradient(180deg, var(--primary-2), var(--primary)); border-color: transparent; color: var(--on-primary); box-shadow: 0 6px 16px -8px rgba(30,64,175,.8); }
+.btn.primary:hover { color: #fff; filter: brightness(1.07); }
+.btn.accent { background: var(--accent); border-color: transparent; color: #111; }
+.btn.small { min-height: 32px; padding: 4px 10px; font-size: 13px; }
+.btn.ghost { border-color: transparent; background: transparent; }
+.btn svg.i { width: 16px; height: 16px; }
+.ghost-ctl { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 4px 6px 4px 12px; }
+.ghost-ctl input { width: 64px; min-height: 30px; padding: 4px 8px; }
+
+/* ---------- tables ---------- */
+.table-wrap { overflow-x: auto; border-radius: var(--radius-sm); }
+table { width: 100%; border-collapse: separate; border-spacing: 0; }
+th, td { text-align: left; padding: 11px 12px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+th { position: sticky; top: 0; z-index: 1; background: var(--card); font-size: 12px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .05em; white-space: nowrap; }
+tbody tr { transition: background .12s var(--ease); }
+tbody tr:hover td { background: color-mix(in srgb, var(--primary-2) 6%, transparent); }
+.who { display: flex; align-items: center; gap: 11px; min-width: 220px; }
+.who b { display: block; color: var(--fg); font-weight: 600; }
+.who a, .who span { font-size: 14px; }
+.who a { text-decoration: none; }
+.who a:hover { text-decoration: underline; }
+.avatar { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; flex: none; font: 600 13px var(--font); color: #fff; }
+.pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; color: var(--pc); background: color-mix(in srgb, var(--pc) 13%, transparent); }
+.pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.notes { max-width: 300px; color: var(--muted); font-size: 13px; }
+td select.st { min-height: 32px; padding: 4px 8px; }
+.ring { --v: 0; --c: var(--primary-2); width: 46px; height: 46px; border-radius: 50%; display: grid; place-items: center; background: conic-gradient(var(--c) calc(var(--v) * 1%), var(--muted-bg) 0); }
+.ring span { width: 36px; height: 36px; border-radius: 50%; background: var(--card); display: grid; place-items: center; font: 700 12px var(--mono); color: var(--fg); }
+.tag { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; padding: 2px 8px; border-radius: 6px; background: var(--muted-bg); color: var(--muted); white-space: nowrap; }
+.tag.ok { background: color-mix(in srgb, var(--c-responded) 14%, transparent); color: var(--c-responded); text-decoration: none; font-weight: 600; }
+.row-actions { display: flex; gap: 6px; justify-content: flex-end; white-space: nowrap; }
+
+/* ---------- forms / profile ---------- */
+form.add { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; align-items: end; }
+form.add label, .stack label, .fields label { display: grid; gap: 4px; font-size: 13px; color: var(--muted); font-weight: 500; }
+.stack { display: grid; gap: 14px; min-width: 0; }
+.stack label.check { display: flex; align-items: center; gap: 9px; font-size: 14px; color: var(--fg); font-weight: 400; cursor: pointer; }
+.stack label:not(.check) > input, .stack label > select, .stack label > textarea, .fields label > input, .fields label > select { width: 100%; min-width: 0; }
 .stack > .btn { justify-self: start; }
-.fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
-textarea { width: 100%; min-height: 70px; resize: vertical; }
-.entry-card { border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin-bottom: 10px; background: var(--bg); }
-.entry-card .head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; }
-.entry-card .head b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.photo { width: 120px; height: 120px; border-radius: 50%; object-fit: cover; background: var(--bg); border: 1px solid var(--line); display: block; }
-.photo-empty { width: 120px; height: 120px; border-radius: 50%; border: 1px dashed var(--line); display: grid; place-items: center; color: var(--muted); font-size: 12px; text-align: center; }
-.drop { border: 2px dashed var(--line); border-radius: 10px; padding: 18px; text-align: center; }
-.drop.over { border-color: var(--accent); }
-.sec-title { display: flex; justify-content: space-between; align-items: center; margin: 4px 0 10px; }
+.fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; }
+.profile-grid { display: grid; grid-template-columns: minmax(280px, 340px) 1fr; gap: 16px; align-items: start; }
+.builder { display: grid; grid-template-columns: minmax(320px, 430px) 1fr; gap: 16px; align-items: start; }
+.profile-grid > *, .builder > * { min-width: 0; }
+.entry-card { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 14px; margin-bottom: 12px; background: color-mix(in srgb, var(--muted-bg) 45%, var(--card)); transition: border-color .15s var(--ease); }
+.entry-card:hover { border-color: var(--line-blue); }
+.entry-card .head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 10px; }
+.entry-card .head b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--heading); }
+.photo { width: 112px; height: 112px; border-radius: 50%; object-fit: cover; display: block; border: 3px solid var(--card); box-shadow: 0 0 0 2px var(--primary-2); }
+.photo-empty { width: 112px; height: 112px; border-radius: 50%; border: 2px dashed var(--line); display: grid; place-items: center; color: var(--muted); font-size: 12px; }
+.drop { border: 2px dashed color-mix(in srgb, var(--primary-2) 45%, var(--line)); background: color-mix(in srgb, var(--primary-2) 5%, transparent); border-radius: var(--radius); padding: 20px; text-align: center; transition: background .15s var(--ease), border-color .15s var(--ease); }
+.drop.over { border-color: var(--primary); background: color-mix(in srgb, var(--primary-2) 14%, transparent); }
+.drop svg.i { width: 30px; height: 30px; color: var(--primary-2); }
+.repo-list { display: grid; gap: 8px; max-height: 460px; overflow: auto; padding-right: 4px; }
+.repo { display: grid; grid-template-columns: auto 1fr; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); cursor: pointer; transition: border-color .15s var(--ease), background .15s var(--ease); }
+.repo:hover { border-color: var(--primary-2); }
+.repo.on { border-color: var(--primary-2); background: color-mix(in srgb, var(--primary-2) 7%, transparent); }
+.repo b { color: var(--fg); }
+.repo p { margin: 3px 0 6px; font-size: 13px; color: var(--muted); }
+.chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.chip { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12px; border: 1px solid var(--line); background: var(--card); color: var(--muted); }
+.chip.ok { border-color: color-mix(in srgb, var(--c-responded) 45%, transparent); color: var(--c-responded); background: color-mix(in srgb, var(--c-responded) 8%, transparent); }
+.chip.gap { border-color: color-mix(in srgb, var(--accent) 45%, transparent); color: var(--accent); background: var(--accent-soft); }
 .busy { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); }
-.busy::before { content: ""; width: 14px; height: 14px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
+.busy::before { content: ""; width: 14px; height: 14px; border: 2px solid var(--line); border-top-color: var(--primary-2); border-radius: 50%; animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .busy::before { animation: none; } }
-.builder { display: grid; grid-template-columns: minmax(300px, 420px) 1fr; gap: 12px; align-items: start; }
-@media (max-width: 1000px) { .builder { grid-template-columns: 1fr; } }
-iframe.cv { width: 100%; height: 1100px; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
-.match { display: inline-block; min-width: 44px; padding: 2px 7px; border-radius: 6px; font-weight: 700; font-size: 12px; color: #fff; text-align: center; }
-.warn { background: color-mix(in srgb, #f59e0b 14%, var(--panel)); border: 1px solid color-mix(in srgb, #f59e0b 40%, transparent); padding: 8px 12px; border-radius: 8px; margin: 8px 0; }
-.ghost-ctl { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
-.ghost-ctl input { width: 64px; }
-@media (max-width: 640px) { header, main { padding-left: 16px; padding-right: 16px; } }
+.job-card { display: flex; gap: 14px; align-items: center; padding: 14px; border-radius: var(--radius-sm); background: linear-gradient(120deg, color-mix(in srgb, var(--primary-2) 10%, transparent), color-mix(in srgb, var(--accent) 8%, transparent)); border: 1px solid var(--line-blue); margin-bottom: 14px; }
+.job-card .grow { flex: 1; min-width: 0; }
+.job-card b { display: block; color: var(--heading); font-size: 16px; }
+iframe.cv { width: 100%; height: 1120px; border: 1px solid var(--line); border-radius: var(--radius); background: #fff; box-shadow: var(--shadow); }
+.toast { position: fixed; bottom: 20px; right: 20px; background: var(--fg); color: var(--bg); padding: 11px 16px; border-radius: 12px; opacity: 0; transform: translateY(8px); transition: opacity .2s var(--ease), transform .2s var(--ease); pointer-events: none; max-width: 380px; box-shadow: var(--shadow); z-index: 10; }
+.toast.show { opacity: 1; transform: none; }
+section.enter > * { animation: rise .32s var(--ease) both; }
+section.enter > *:nth-child(2) { animation-delay: .04s; }
+section.enter > *:nth-child(3) { animation-delay: .08s; }
+section.enter > *:nth-child(4) { animation-delay: .12s; }
+@keyframes rise { from { opacity: 0; transform: translateY(8px); } }
+
+@media (max-width: 1100px) { .builder, .profile-grid { grid-template-columns: 1fr; } }
+@media (max-width: 900px) {
+  .app { grid-template-columns: 1fr; }
+  .sidebar { position: sticky; top: 0; z-index: 5; height: auto; flex-direction: row; align-items: center; padding: 10px 12px; gap: 10px; overflow-x: auto; }
+  .brand span, .nav-label, .me { display: none; }
+  nav { display: flex; gap: 4px; }
+  nav button { width: auto; padding: 8px 12px; }
+  nav button span.txt { display: none; }
+  .topbar, main { padding-left: 16px; padding-right: 16px; }
+  .grid { grid-template-columns: 1fr; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
 </style>
 </head>
 <body>
-<header>
-  <h1>Application Tracker</h1>
-  <nav role="tablist">
-    <button role="tab" data-tab="dashboard" aria-selected="true">Dashboard</button>
-    <button role="tab" data-tab="applications" aria-selected="false">Applications</button>
-    <button role="tab" data-tab="followups" aria-selected="false">Follow-ups<span id="fu-count" class="badge-count hidden"></span></button>
-    <button role="tab" data-tab="opportunities" aria-selected="false">Opportunities</button>
-    <button role="tab" data-tab="profile" aria-selected="false">Profile</button>
-    <button role="tab" data-tab="builder" aria-selected="false">CV builder</button>
-  </nav>
-  <label class="ghost-ctl" title="An application with no reply for this many days counts as ghosted">
-    Ghosted after <input id="ghost-days" type="number" min="1" max="365"> days
-  </label>
-</header>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-dashboard" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></symbol>
+  <symbol id="i-sparkles" viewBox="0 0 24 24"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/></symbol>
+  <symbol id="i-send" viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></symbol>
+  <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></symbol>
+  <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="5"/><path d="M20 21a8 8 0 0 0-16 0"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/></symbol>
+  <symbol id="i-github" viewBox="0 0 24 24"><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.4 5.4 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4"/><path d="M9 18c-4.51 2-5-2-7-2"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></symbol>
+  <symbol id="i-upload" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m17 8-5-5-5 5"/><path d="M12 3v12"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></symbol>
+  <symbol id="i-external" viewBox="0 0 24 24"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></symbol>
+  <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></symbol>
+  <symbol id="i-message" viewBox="0 0 24 24"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></symbol>
+  <symbol id="i-ghost" viewBox="0 0 24 24"><path d="M9 10h.01"/><path d="M15 10h.01"/><path d="M12 2a8 8 0 0 0-8 8v12l3-3 2.5 2.5L12 19l2.5 2.5L17 19l3 3V10a8 8 0 0 0-8-8z"/></symbol>
+  <symbol id="i-calendar" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></symbol>
+  <symbol id="i-award" viewBox="0 0 24 24"><circle cx="12" cy="8" r="6"/><path d="M15.48 12.89 17 22l-5-3-5 3 1.52-9.11"/></symbol>
+  <symbol id="i-pencil" viewBox="0 0 24 24"><path d="M21.17 6.81a1 1 0 0 0-3.99-3.99L3.84 16.17a2 2 0 0 0-.5.83l-1.32 4.35a.5.5 0 0 0 .62.62l4.35-1.32a2 2 0 0 0 .83-.5z"/></symbol>
+  <symbol id="i-wand" viewBox="0 0 24 24"><path d="m21.64 3.64-1.28-1.28a1.21 1.21 0 0 0-1.72 0L2.36 18.64a1.21 1.21 0 0 0 0 1.72l1.28 1.28a1.2 1.2 0 0 0 1.72 0L21.64 5.36a1.2 1.2 0 0 0 0-1.72"/><path d="m14 7 3 3"/><path d="M5 6v4M19 14v4M10 2v2M7 8H3M21 16h-4M11 3H9"/></symbol>
+  <symbol id="i-left" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></symbol>
+  <symbol id="i-right" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M5 12h14M12 5v14"/></symbol>
+  <symbol id="i-printer" viewBox="0 0 24 24"><path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect width="12" height="8" x="6" y="14"/></symbol>
+</svg>
 
-<main>
-  <section id="tab-dashboard">
-    <div class="cards" id="cards"></div>
-    <div class="grid">
-      <div class="panel"><h3>Who replied?</h3><div id="chart-response"></div></div>
-      <div class="panel"><h3>Pipeline funnel</h3><div id="chart-funnel"></div></div>
-    </div>
-    <div class="grid">
-      <div class="panel"><h3>Applications per week (last 12 weeks)</h3><div id="chart-weekly"></div></div>
-      <div class="panel"><h3>Replies by site</h3><div id="chart-portal"></div></div>
-    </div>
-    <div class="grid">
-      <div class="panel"><h3>Current status</h3><div id="chart-status"></div></div>
-      <div class="panel"><h3>Recent activity</h3><div id="recent"></div></div>
-    </div>
-  </section>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand"><div class="logo"><svg class="i" style="color:#fff"><use href="#i-sparkles"/></svg></div><div><b>Job Search</b><span>Paris · AI &amp; GenAI</span></div></div>
+    <nav role="tablist" aria-label="Sections">
+      <div class="nav-label">Overview</div>
+      <button role="tab" data-tab="dashboard" aria-selected="true"><svg class="i"><use href="#i-dashboard"/></svg><span class="txt">Dashboard</span></button>
+      <button role="tab" data-tab="opportunities" aria-selected="false"><svg class="i"><use href="#i-sparkles"/></svg><span class="txt">Opportunities</span><span class="count" id="opp-nav-count"></span></button>
+      <button role="tab" data-tab="applications" aria-selected="false"><svg class="i"><use href="#i-send"/></svg><span class="txt">Applications</span><span class="count" id="app-nav-count"></span></button>
+      <button role="tab" data-tab="followups" aria-selected="false"><svg class="i"><use href="#i-bell"/></svg><span class="txt">Follow-ups</span><span id="fu-count" class="count hot hidden"></span></button>
+      <div class="nav-label">You</div>
+      <button role="tab" data-tab="profile" aria-selected="false"><svg class="i"><use href="#i-user"/></svg><span class="txt">Profile</span></button>
+      <button role="tab" data-tab="builder" aria-selected="false"><svg class="i"><use href="#i-file"/></svg><span class="txt">CV builder</span><span class="count" id="cv-nav-count"></span></button>
+    </nav>
+    <div class="me" id="me"></div>
+  </aside>
 
-  <section id="tab-applications" class="hidden">
-    <div class="panel" style="margin-bottom:12px">
-      <h2>Add an application</h2>
-      <form class="add" id="add-form" autocomplete="off">
-        <label>Company*<input name="company" required></label>
-        <label>Role*<input name="role" required></label>
-        <label>Date applied<input name="date" type="date"></label>
-        <label>Status<select name="status"></select></label>
-        <label>Site / channel<select name="channel">
-          <option>LinkedIn</option><option>Welcome to the Jungle</option><option>Indeed</option>
-          <option>HelloWork</option><option>Free-Work</option><option>Company site</option>
-          <option>referral</option><option>other</option></select></label>
-        <label>Posting URL<input name="source" type="url" placeholder="https://"></label>
-        <label>Contact person<input name="contact_person"></label>
-        <label>Deadline<input name="deadline" type="date"></label>
-        <button class="btn primary" type="submit">Add</button>
-      </form>
-    </div>
-    <div class="panel">
-      <div class="toolbar">
-        <input id="q" type="search" placeholder="Search company, role, notes…" style="flex:1;min-width:200px">
-        <select id="f-response"><option value="">All replies</option><option value="responded">Responded</option><option value="waiting">Waiting</option><option value="ghosted">Ghosted</option><option value="not_sent">Not sent (drafted)</option><option value="withdrawn">Withdrawn</option></select>
-        <select id="f-status"><option value="">All statuses</option></select>
-        <select id="f-portal"><option value="">All sites</option></select>
-        <label class="muted"><input type="checkbox" id="f-open"> Open only</label>
+  <div class="main">
+    <header class="topbar">
+      <div><h1 id="page-title">Dashboard</h1><p id="page-sub"></p></div>
+      <div class="top-actions">
+        <label class="ghost-ctl" title="An application with no reply for this many days counts as ghosted">
+          <svg class="i"><use href="#i-ghost"/></svg> Ghosted after <input id="ghost-days" type="number" min="1" max="365" aria-label="Days before ghosted"> days
+        </label>
+        <button class="theme-btn" id="theme-btn" style="background:var(--card);color:var(--fg);border:1px solid var(--line)" aria-label="Toggle dark mode"><svg class="i"><use href="#i-moon"/></svg></button>
       </div>
-      <div class="table-wrap"><table id="apps-table"></table></div>
-    </div>
-  </section>
+    </header>
 
-  <section id="tab-followups" class="hidden">
-    <div class="panel">
-      <h2>Follow-ups due</h2>
-      <p class="muted" id="fu-help"></p>
-      <div class="table-wrap"><table id="fu-table"></table></div>
-    </div>
-  </section>
+    <main>
+      <section id="tab-dashboard">
+        <div class="hero" id="hero"></div>
+        <div class="cards" id="cards"></div>
+        <div class="grid">
+          <div class="panel"><h3>Who replied?</h3><div id="chart-response"></div></div>
+          <div class="panel"><h3>Pipeline funnel</h3><div id="chart-funnel"></div></div>
+        </div>
+        <div class="grid">
+          <div class="panel"><h3>Applications per week · last 12 weeks</h3><div id="chart-weekly"></div></div>
+          <div class="panel"><h3>Replies by job site</h3><div id="chart-portal"></div></div>
+        </div>
+        <div class="grid">
+          <div class="panel"><h3>Current status</h3><div id="chart-status"></div></div>
+          <div class="panel"><h3>Recent activity</h3><div id="recent"></div></div>
+        </div>
+      </section>
 
-  <section id="tab-opportunities" class="hidden">
-    <div class="panel">
-      <div class="sec-title"><h2 style="margin:0">Found but not applied yet</h2>
-        <span class="toolbar" style="margin:0">
-          <select id="search-loc" aria-label="Search area"><option value="paris">Paris</option><option value="ile-de-france">Île-de-France</option><option value="france">All France</option></select>
-          <button class="btn primary" id="search-btn">Find jobs for my profile</button>
-        </span></div>
-      <p class="muted" id="search-status">Jobs from <code>/scrape</code> and from "Find jobs for my profile". <b>Match</b> compares each title with your profile; "Tailor CV" builds a CV for that job.</p>
-      <div class="toolbar">
-        <input id="oq" type="search" placeholder="Search…" style="flex:1;min-width:200px">
-        <select id="of-portal"><option value="">All sites</option></select>
-        <select id="of-fit"><option value="">Any fit</option><option value="high">High fit</option><option value="medium">Medium fit</option><option value="low">Low fit</option></select>
-        <span class="muted" id="opp-count"></span>
-      </div>
-      <div class="table-wrap"><table id="opp-table"></table></div>
-    </div>
-  </section>
-  <section id="tab-profile" class="hidden">
-    <div class="profile-grid">
-      <div class="stack">
+      <section id="tab-opportunities" class="hidden">
         <div class="panel">
-          <h2>Import your CV</h2>
-          <div class="drop" id="drop">
-            <p style="margin:0 0 8px">Drop a PDF or DOCX here, or</p>
-            <input type="file" id="cv-file" accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document">
-          </div>
-          <div class="stack" style="margin-top:10px">
-            <label class="check"><input type="radio" name="method" value="claude" checked> Extract with Claude (most accurate)</label>
-            <label class="check"><input type="radio" name="method" value="local"> Local only (nothing leaves this computer)</label>
-          </div>
-          <p class="muted" id="import-status" style="margin-bottom:0"></p>
-        </div>
-        <div class="panel">
-          <h2>Photo</h2>
-          <div id="photo-box"></div>
-          <div class="toolbar" style="margin-top:10px">
-            <button class="btn small" id="photo-pick">Upload photo</button>
-            <input type="file" id="photo-file" accept="image/*" class="hidden">
-            <button class="btn small" id="photo-remove">Remove</button>
-          </div>
-        </div>
-        <div class="panel">
-          <h2>Contact</h2>
-          <div class="stack" id="basics"></div>
-        </div>
-      </div>
-      <div class="stack">
-        <div class="panel">
-          <div class="sec-title"><h2 style="margin:0">Profile</h2>
-            <span><span class="muted" id="dirty"></span> <button class="btn primary" id="save-profile">Save profile</button></span></div>
-          <div id="profile-warn"></div>
-          <label class="muted" style="display:grid;gap:3px">Summary<textarea id="summary" rows="3"></textarea></label>
-        </div>
-        <div class="panel"><div id="sec-experience"></div></div>
-        <div class="panel"><div id="sec-projects"></div></div>
-        <div class="panel"><div id="sec-education"></div></div>
-        <div class="panel">
-          <h2>Skills, languages, certifications</h2>
-          <div class="fields" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr))">
-            <label>Skills (one per line)<textarea id="skills" rows="8"></textarea></label>
-            <label>Languages ("French - native", one per line)<textarea id="languages" rows="8"></textarea></label>
-            <label>Certifications ("Name - issuer - date", one per line)<textarea id="certs" rows="8"></textarea></label>
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <section id="tab-builder" class="hidden">
-    <div class="builder">
-      <div class="stack">
-        <div class="panel">
-          <h2>Target job</h2>
-          <div class="stack">
-            <label>Pick a found job (best matches first)<select id="b-opp"><option value="">— or paste a description below —</option></select></label>
-            <div class="fields">
-              <label>Job title<input id="b-title"></label>
-              <label>Company<input id="b-company"></label>
+          <div class="sec-title">
+            <div><h2>Found for you, not applied yet</h2><p class="muted" id="search-status" style="margin:4px 0 0">Ranked by how well each job title fits your profile. Build a tailored CV in one click.</p></div>
+            <div class="toolbar" style="margin:0">
+              <select id="search-loc" aria-label="Search area"><option value="paris">Paris</option><option value="ile-de-france">Île-de-France</option><option value="france">All France</option></select>
+              <button class="btn primary" id="search-btn"><svg class="i"><use href="#i-search"/></svg> Find jobs for my profile</button>
             </div>
-            <label>Job description <span id="b-fetch-status"></span><textarea id="b-posting" rows="12" placeholder="Paste the full job description here"></textarea></label>
-            <button class="btn" id="b-fetch">Fetch the description of the picked job</button>
           </div>
+          <div class="toolbar">
+            <div class="search"><svg class="i"><use href="#i-search"/></svg><input id="oq" type="search" placeholder="Search company, title, city…" aria-label="Search opportunities"></div>
+            <select id="of-portal" aria-label="Site"><option value="">All sites</option></select>
+            <select id="of-fit" aria-label="Fit"><option value="">Any fit</option><option value="high">High fit</option><option value="medium">Medium fit</option><option value="low">Low fit</option></select>
+            <label class="muted" style="display:flex;gap:7px;align-items:center;font-size:14px"><input type="checkbox" id="of-cv"> With CV only</label>
+            <span class="muted num" id="opp-count"></span>
+          </div>
+          <div class="table-wrap"><table id="opp-table"></table></div>
+        </div>
+      </section>
+
+      <section id="tab-applications" class="hidden">
+        <div class="panel" style="margin-bottom:16px">
+          <div class="sec-title"><h2>Add an application</h2></div>
+          <form class="add" id="add-form" autocomplete="off">
+            <label>Company*<input name="company" required></label>
+            <label>Role*<input name="role" required></label>
+            <label>Date applied<input name="date" type="date"></label>
+            <label>Status<select name="status"></select></label>
+            <label>Site / channel<select name="channel">
+              <option>LinkedIn</option><option>Welcome to the Jungle</option><option>Indeed</option>
+              <option>HelloWork</option><option>Free-Work</option><option>Company site</option>
+              <option>referral</option><option>other</option></select></label>
+            <label>Posting URL<input name="source" type="url" placeholder="https://"></label>
+            <label>Contact person<input name="contact_person"></label>
+            <label>Deadline<input name="deadline" type="date"></label>
+            <button class="btn primary" type="submit"><svg class="i"><use href="#i-plus"/></svg> Add</button>
+          </form>
         </div>
         <div class="panel">
-          <h2>Options</h2>
+          <div class="toolbar">
+            <div class="search"><svg class="i"><use href="#i-search"/></svg><input id="q" type="search" placeholder="Search company, role, notes…" aria-label="Search applications"></div>
+            <select id="f-response" aria-label="Reply"><option value="">All replies</option><option value="responded">Responded</option><option value="waiting">Waiting</option><option value="ghosted">Ghosted</option><option value="not_sent">Not sent (drafted)</option><option value="withdrawn">Withdrawn</option></select>
+            <select id="f-status" aria-label="Status"><option value="">All statuses</option></select>
+            <select id="f-portal" aria-label="Site"><option value="">All sites</option></select>
+            <label class="muted" style="display:flex;gap:7px;align-items:center;font-size:14px"><input type="checkbox" id="f-open"> Open only</label>
+          </div>
+          <div class="table-wrap"><table id="apps-table"></table></div>
+        </div>
+      </section>
+
+      <section id="tab-followups" class="hidden">
+        <div class="panel">
+          <div class="sec-title"><h2>Follow-ups due</h2></div>
+          <p class="muted" id="fu-help" style="margin-top:0"></p>
+          <div class="table-wrap"><table id="fu-table"></table></div>
+        </div>
+      </section>
+
+      <section id="tab-profile" class="hidden">
+        <div class="profile-grid">
           <div class="stack">
-            <label>Headline on the CV<input id="b-headline" placeholder="Your own headline"></label>
-            <div class="fields">
-              <label>Bullets per role<select id="b-bullets"><option>2</option><option>3</option><option selected>4</option><option>5</option><option>6</option></select></label>
-              <label>Projects shown<select id="b-projects"><option>0</option><option>1</option><option>2</option><option selected>3</option><option>4</option><option>5</option></select></label>
+            <div class="panel">
+              <h2 style="margin-bottom:12px">Import your CV</h2>
+              <div class="drop" id="drop">
+                <svg class="i"><use href="#i-upload"/></svg>
+                <p style="margin:6px 0 10px;font-weight:500">Drop a PDF or DOCX here</p>
+                <input type="file" id="cv-file" accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" aria-label="Choose CV file">
+              </div>
+              <div class="stack" style="margin-top:12px;gap:8px">
+                <label class="check"><input type="radio" name="method" value="claude" checked> Extract with Claude (most accurate)</label>
+                <label class="check"><input type="radio" name="method" value="local"> Local only (nothing leaves this computer)</label>
+              </div>
+              <div class="muted" id="import-status" style="margin-top:10px"></div>
             </div>
-            <label class="check"><input type="checkbox" id="b-photo" checked> Include photo (usual in France)</label>
-            <label class="check"><input type="checkbox" id="b-polish"> Polish wording with Claude (rephrases your own facts only)</label>
-            <button class="btn primary" id="b-build">Build tailored CV</button>
-            <span id="b-status" class="muted"></span>
+            <div class="panel">
+              <h2 style="margin-bottom:12px;display:flex;gap:8px;align-items:center"><svg class="i"><use href="#i-github"/></svg> Import from GitHub</h2>
+              <div class="toolbar" style="margin-bottom:8px">
+                <input id="gh-user" placeholder="username or github.com/…" aria-label="GitHub username" style="flex:1;min-width:0">
+                <button class="btn" id="gh-load">Load repos</button>
+              </div>
+              <div id="gh-status" class="muted" style="font-size:14px"></div>
+              <div id="gh-list" class="repo-list"></div>
+              <div id="gh-actions" class="stack hidden" style="margin-top:12px;gap:8px">
+                <label class="check"><input type="checkbox" id="gh-claude" checked> Write project bullets from each README with Claude</label>
+                <button class="btn primary" id="gh-import"><svg class="i"><use href="#i-plus"/></svg> Add selected to my projects</button>
+              </div>
+            </div>
+            <div class="panel">
+              <h2 style="margin-bottom:12px">Photo</h2>
+              <div id="photo-box"></div>
+              <div class="toolbar" style="margin:12px 0 0">
+                <button class="btn small" id="photo-pick"><svg class="i"><use href="#i-upload"/></svg> Upload photo</button>
+                <input type="file" id="photo-file" accept="image/*" class="hidden">
+                <button class="btn small" id="photo-remove">Remove</button>
+              </div>
+            </div>
+            <div class="panel">
+              <h2 style="margin-bottom:12px">Contact</h2>
+              <div class="stack" id="basics" style="gap:10px"></div>
+            </div>
+          </div>
+          <div class="stack" style="gap:16px">
+            <div class="panel">
+              <div class="sec-title"><h2>Your profile</h2>
+                <span style="display:flex;gap:10px;align-items:center"><span class="muted" id="dirty"></span> <button class="btn primary" id="save-profile"><svg class="i"><use href="#i-check"/></svg> Save profile</button></span></div>
+              <div id="profile-warn"></div>
+              <label class="muted" style="display:grid;gap:4px;font-size:13px;font-weight:500">Summary<textarea id="summary" rows="3"></textarea></label>
+            </div>
+            <div class="panel"><div id="sec-experience"></div></div>
+            <div class="panel"><div id="sec-projects"></div></div>
+            <div class="panel"><div id="sec-education"></div></div>
+            <div class="panel">
+              <h2 style="margin-bottom:12px">Skills, languages, certifications</h2>
+              <div class="fields" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr))">
+                <label>Skills (one per line)<textarea id="skills" rows="9"></textarea></label>
+                <label>Languages ("French - native")<textarea id="languages" rows="9"></textarea></label>
+                <label>Certifications ("Name - issuer - date")<textarea id="certs" rows="9"></textarea></label>
+              </div>
+            </div>
           </div>
         </div>
-        <div class="panel">
-          <h2>Saved CVs</h2>
-          <div id="b-saved"></div>
+      </section>
+
+      <section id="tab-builder" class="hidden">
+        <div class="builder">
+          <div class="stack" style="gap:16px">
+            <div class="panel">
+              <div class="sec-title"><h2>Target job</h2>
+                <span style="display:flex;gap:6px">
+                  <button class="btn small" id="b-prev" aria-label="Previous best match"><svg class="i"><use href="#i-left"/></svg></button>
+                  <button class="btn small" id="b-next" aria-label="Next best match">Next match <svg class="i"><use href="#i-right"/></svg></button>
+                </span></div>
+              <div class="stack" style="gap:12px">
+                <label>Pick a found job (best matches first)<select id="b-opp"><option value="">— or paste a description below —</option></select></label>
+                <div class="fields">
+                  <label>Job title<input id="b-title"></label>
+                  <label>Company<input id="b-company"></label>
+                </div>
+                <label>Job description <span id="b-fetch-status"></span><textarea id="b-posting" rows="11" placeholder="Paste the full job description here"></textarea></label>
+                <button class="btn" id="b-fetch"><svg class="i"><use href="#i-search"/></svg> Fetch the picked job's description</button>
+              </div>
+            </div>
+            <div class="panel">
+              <h2 style="margin-bottom:12px">Options</h2>
+              <div class="stack" style="gap:12px">
+                <label>Headline on the CV<input id="b-headline" placeholder="Your own headline"></label>
+                <div class="fields">
+                  <label>Bullets per role<select id="b-bullets"><option>2</option><option>3</option><option selected>4</option><option>5</option><option>6</option></select></label>
+                  <label>Projects shown<select id="b-projects"><option>0</option><option>1</option><option>2</option><option selected>3</option><option>4</option><option>5</option></select></label>
+                </div>
+                <label class="check"><input type="checkbox" id="b-photo" checked> Include photo (usual in France)</label>
+                <label class="check"><input type="checkbox" id="b-polish"> Polish wording with Claude (rephrases your own facts only)</label>
+                <button class="btn primary" id="b-build"><svg class="i"><use href="#i-wand"/></svg> Build tailored CV</button>
+                <span id="b-status" class="muted"></span>
+              </div>
+            </div>
+            <div class="panel">
+              <h2 style="margin-bottom:10px">Saved CVs</h2>
+              <div id="b-saved"></div>
+            </div>
+          </div>
+          <div class="stack">
+            <div class="panel" id="b-result"><div class="empty"><svg class="i"><use href="#i-file"/></svg><div>Pick a job on the left (or click "Build CV" on any opportunity).<br>Your own experiences, bullets, projects and skills are ranked against the posting; nothing is invented.</div></div></div>
+          </div>
         </div>
-      </div>
-      <div class="stack">
-        <div class="panel" id="b-result"><div class="empty">Pick or paste a job, then "Build tailored CV". Your profile's experiences, bullets, projects and skills are ranked against the posting; nothing is invented.</div></div>
-      </div>
-    </div>
-  </section>
-</main>
+      </section>
+    </main>
+  </div>
+</div>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script>
+
 "use strict";
 const TOKEN = "__TRACKER_TOKEN__";
 const RESP = {
@@ -293,6 +491,17 @@ const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "
 const cssVar = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 const label = (s) => String(s || "").replace(/_/g, " ");
 const safeUrl = (u) => /^https?:\/\//i.test(u || "") ? u : "";
+const icon = (name) => `<svg class="i" aria-hidden="true"><use href="#i-${name}"/></svg>`;
+function avatar(name) {
+  const n = String(name || "?").trim();
+  let h = 0; for (const c of n) h = (h * 31 + c.charCodeAt(0)) % 360;
+  const ini = n.split(/[\s&.-]+/).filter(Boolean).slice(0, 2).map(w => w[0]).join("").toUpperCase() || "?";
+  return `<span class="avatar" style="background:hsl(${h} 55% 42%)" aria-hidden="true">${esc(ini)}</span>`;
+}
+function who(company, sub, url) {
+  const u = safeUrl(url);
+  return `<div class="who">${avatar(company)}<div><b>${esc(company)}</b>${u ? `<a href="${esc(u)}" target="_blank" rel="noopener noreferrer">${esc(sub)}</a>` : `<span class="muted">${esc(sub)}</span>`}</div></div>`;
+}
 
 function store(k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { return null; } }
 
@@ -423,24 +632,29 @@ function render() {
   const due = apps.filter(a => a.followup_due);
   const rate = sent.length ? Math.round((responded / sent.length) * 100) : 0;
 
-  const card = (n, l, color, title) => `<div class="card" style="--k:${color}" title="${esc(title || "")}"><div class="n">${esc(n)}</div><div class="l">${esc(l)}</div></div>`;
+  const card = (n, l, color, ic, title) => `<div class="card" style="--k:${color}" title="${esc(title || "")}"><div class="ic">${icon(ic)}</div><div><div class="n">${esc(n)}</div><div class="l">${esc(l)}</div></div></div>`;
   $("#cards").innerHTML = [
-    card(sent.length, "Applications sent", cssVar("--accent")),
-    card(`${rate}%`, "Response rate", cssVar("--c-responded"), "Replied (interview, offer or rejection) ÷ sent"),
-    card(responded, "Responded", cssVar("--c-responded")),
-    card(waiting, "Waiting for reply", cssVar("--c-waiting")),
-    card(ghosted, "Ghosted", cssVar("--c-ghosted"), `No reply after ${DATA.ghost_days}+ days, or marked no_response`),
-    card(interviews, "Reached interview", cssVar("--s-interview")),
-    card(offers, "Offers", cssVar("--s-offer")),
-    card(drafted, "Drafted, not sent", cssVar("--c-not_sent")),
+    card(sent.length, "Applications sent", cssVar("--primary"), "send"),
+    card(`${rate}%`, "Response rate", cssVar("--c-responded"), "target", "Replied (interview, offer or rejection) ÷ sent"),
+    card(responded, "Responded", cssVar("--c-responded"), "message"),
+    card(waiting, "Waiting for reply", cssVar("--c-waiting"), "clock"),
+    card(ghosted, "Ghosted", cssVar("--c-ghosted"), "ghost", `No reply after ${DATA.ghost_days}+ days, or marked no_response`),
+    card(interviews, "Reached interview", cssVar("--s-interview"), "calendar"),
+    card(offers, "Offers", cssVar("--s-offer"), "award"),
+    card(drafted, "Drafted, not sent", cssVar("--c-not_sent"), "pencil"),
   ].join("");
+  renderHero(due.length);
+  const strong = DATA.opportunities.filter(o => (o.match ?? -1) >= 60).length;
+  $("#opp-nav-count").textContent = DATA.opportunities.length || "";
+  $("#app-nav-count").textContent = sent.length || "";
+  $("#page-sub").dataset.opps = strong;
 
   donut($("#chart-response"), ["responded", "waiting", "ghosted", "withdrawn"].map(k => ({
     label: RESP[k], value: count(a => a.response === k), color: cssVar(`--c-${k}`),
   })), sent.length);
 
   hbars($("#chart-funnel"), [
-    { label: "Sent", segments: [{ value: sent.length, color: cssVar("--accent") }] },
+    { label: "Sent", segments: [{ value: sent.length, color: cssVar("--primary-2") }] },
     { label: "Got a reply", segments: [{ value: responded, color: cssVar("--c-responded") }], suffix: pct(responded, sent.length) },
     { label: "Interview", segments: [{ value: interviews, color: cssVar("--s-interview") }], suffix: pct(interviews, sent.length) },
     { label: "Offer", segments: [{ value: offers, color: cssVar("--s-offer") }], suffix: pct(offers, sent.length) },
@@ -469,7 +683,7 @@ function render() {
   })));
 
   const recent = [...apps].filter(a => a.last_activity).sort((a, b) => b.last_activity.localeCompare(a.last_activity)).slice(0, 8);
-  $("#recent").innerHTML = recent.length ? `<table>${recent.map(a => `<tr><td class="muted" style="white-space:nowrap">${esc(a.last_activity)}</td><td><b>${esc(a.row.company)}</b><br><span class="muted">${esc(a.row.role)}</span></td><td>${pill(a.status)}</td></tr>`).join("")}</table>` : `<div class="empty">No applications yet. Add one in the Applications tab, or run /apply in Claude Code.</div>`;
+  $("#recent").innerHTML = recent.length ? `<table><tbody>${recent.map(a => `<tr><td>${who(a.row.company, a.row.role)}</td><td class="muted num" style="white-space:nowrap">${esc(a.last_activity)}</td><td>${pill(a.status)}</td></tr>`).join("")}</tbody></table>` : `<div class="empty">${icon("send")}<div>No applications yet.<br>Pick a job in <b>Opportunities</b>, build its CV, then "Mark applied".</div></div>`;
 
   const fc = $("#fu-count"); fc.textContent = due.length; fc.classList.toggle("hidden", !due.length);
   fillSelect($("#f-status"), DATA.statuses.map(s => [s, label(s)]), "All statuses");
@@ -500,21 +714,21 @@ function renderApps() {
     (!fr || a.response === fr) && (!fs || a.status === fs) && (!fp || a.portal === fp) && (!open || !a.final)
   ).sort((a, b) => (b.applied_on || "").localeCompare(a.applied_on || "") || a.row.company.localeCompare(b.row.company));
   const t = $("#apps-table");
-  if (!rows.length) { t.innerHTML = `<tr><td class="empty">${DATA.applications.length ? "No application matches these filters." : "No applications yet."}</td></tr>`; return; }
+  if (!rows.length) { t.innerHTML = `<tr><td class="empty">${icon("send")}<div>${DATA.applications.length ? "No application matches these filters." : "No applications yet - add one above or click \"Mark applied\" on an opportunity."}</div></td></tr>`; return; }
   t.innerHTML = `<thead><tr><th>Applied</th><th>Company / role</th><th>Site</th><th>Status</th><th>Reply</th><th>Quiet</th><th>Contact</th><th>Notes</th><th></th></tr></thead><tbody>` +
     rows.map(a => {
       const url = safeUrl(a.row.source);
       const opts = DATA.statuses.map(s => `<option value="${esc(s)}"${s === a.status ? " selected" : ""}>${esc(label(s))}</option>`).join("") + (a.known_status ? "" : `<option selected>${esc(a.row.status)}</option>`);
       return `<tr data-i="${a.index}">
-        <td style="white-space:nowrap">${esc(a.applied_on || a.row.date || "—")}</td>
-        <td><b>${esc(a.row.company)}</b><br>${url ? `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(a.row.role)}</a>` : esc(a.row.role)}</td>
+        <td class="num" style="white-space:nowrap">${esc(a.applied_on || a.row.date || "—")}</td>
+        <td>${who(a.row.company, a.row.role, url)}</td>
         <td>${esc(a.portal)}</td>
         <td><select class="st" aria-label="Status">${opts}</select></td>
         <td>${rpill(a.response)}</td>
         <td style="white-space:nowrap">${a.days_quiet == null || a.final || a.status === "drafted" ? "—" : `${a.days_quiet} d`}${a.followups ? `<br><span class="muted">${a.followups} follow-up${a.followups > 1 ? "s" : ""}</span>` : ""}</td>
         <td>${esc(a.row.contact_person || "—")}</td>
         <td class="notes">${esc(a.row.notes || "")}</td>
-        <td style="white-space:nowrap"><button class="btn small note">+ Note</button>${a.status === "applied" ? ` <button class="btn small fu">Followed up</button>` : ""}</td>
+        <td><div class="row-actions"><button class="btn small note">+ Note</button>${a.status === "applied" ? `<button class="btn small fu">Followed up</button>` : ""}</div></td>
       </tr>`;
     }).join("") + "</tbody>";
 }
@@ -525,38 +739,61 @@ function renderFollowups() {
   const due = DATA.applications.filter(a => a.followup_due).sort((a, b) => b.days_quiet - a.days_quiet);
   $("#fu-help").textContent = `Applications still "applied" after ${DATA.followup_days}+ quiet days with fewer than 2 follow-ups. Use "/outcome followup <company>" in Claude Code to draft a short follow-up, send it, then click "Followed up".`;
   const t = $("#fu-table");
-  if (!due.length) { t.innerHTML = `<tr><td class="empty">Nothing to chase right now.</td></tr>`; return; }
+  if (!due.length) { t.innerHTML = `<tr><td class="empty">${icon("check")}<div>Nothing to chase right now.</div></td></tr>`; return; }
   t.innerHTML = `<thead><tr><th>Company / role</th><th>Applied</th><th>Quiet</th><th>Follow-ups</th><th>Contact</th><th></th></tr></thead><tbody>` +
-    due.map(a => `<tr data-i="${a.index}"><td><b>${esc(a.row.company)}</b><br><span class="muted">${esc(a.row.role)}</span></td><td>${esc(a.applied_on || "—")}</td><td>${a.days_quiet} d</td><td>${a.followups}/2</td><td>${esc(a.row.contact_person || "—")}</td><td style="white-space:nowrap"><button class="btn small fu">Followed up</button> <button class="btn small ghost">Mark ghosted</button></td></tr>`).join("") + "</tbody>";
+    due.map(a => `<tr data-i="${a.index}"><td>${who(a.row.company, a.row.role)}</td><td>${esc(a.applied_on || "—")}</td><td>${a.days_quiet} d</td><td>${a.followups}/2</td><td>${esc(a.row.contact_person || "—")}</td><td style="white-space:nowrap"><button class="btn small fu">Followed up</button> <button class="btn small ghost">Mark ghosted</button></td></tr>`).join("") + "</tbody>";
+}
+
+function ring(v) {
+  const c = v >= 60 ? cssVar("--c-responded") : v >= 30 ? cssVar("--accent") : cssVar("--c-ghosted");
+  return `<div class="ring" style="--v:${Number(v) || 0};--c:${c}" title="Match with your profile"><span>${esc(v)}%</span></div>`;
 }
 
 function renderOpps() {
-  const q = $("#oq").value.trim().toLowerCase(), fp = $("#of-portal").value, ff = $("#of-fit").value;
-  const rows = DATA.opportunities.filter(o => (!q || [o.title, o.company, o.location].join(" ").toLowerCase().includes(q)) && (!fp || o.portal === fp) && (!ff || o.fit === ff));
-  $("#opp-count").textContent = `${rows.length} of ${DATA.opportunities.length} jobs`;
+  const q = $("#oq").value.trim().toLowerCase(), fp = $("#of-portal").value, ff = $("#of-fit").value, withCv = $("#of-cv").checked;
+  const rows = DATA.opportunities.filter(o => (!q || [o.title, o.company, o.location].join(" ").toLowerCase().includes(q)) && (!fp || o.portal === fp) && (!ff || o.fit === ff) && (!withCv || o.cv));
+  $("#opp-count").textContent = `${rows.length} / ${DATA.opportunities.length}`;
   const t = $("#opp-table");
-  if (!rows.length) { t.innerHTML = `<tr><td class="empty">${DATA.opportunities.length ? "No match." : "No open opportunities. Run /scrape then /rank in Claude Code."}</td></tr>`; return; }
+  if (!rows.length) { t.innerHTML = `<tr><td class="empty">${icon("sparkles")}<div>${DATA.opportunities.length ? "No job matches these filters." : "No opportunities yet - click \"Find jobs for my profile\" or run /scrape in Claude Code."}</div></td></tr>`; return; }
   const hasMatch = DATA.opportunities.some(o => o.match != null);
-  t.innerHTML = `<thead><tr>${hasMatch ? "<th>Match</th>" : ""}<th>Score / fit</th><th>Job</th><th>Location</th><th>Site</th><th>Posted</th><th>Deadline</th><th></th></tr></thead><tbody>` +
-    rows.map((o, i) => {
-      const url = safeUrl(o.url);
-      return `<tr data-o="${DATA.opportunities.indexOf(o)}">${hasMatch ? `<td>${matchBadge(o)}</td>` : ""}<td>${o.score == null ? `<span class="muted">${o.fit ? esc(o.fit) + " fit" : "unscored"}</span>` : `<b>${esc(o.score)}</b><br><span class="muted">${esc(o.verdict)}</span>`}</td>
-      <td><b>${esc(o.company)}</b><br>${url ? `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(o.title)}</a>` : esc(o.title)}</td>
-      <td>${esc(o.location || "—")}</td><td style="white-space:nowrap">${esc(o.portal)}</td><td style="white-space:nowrap">${esc(o.posted_date || o.first_seen || "—")}</td><td>${esc(o.deadline || "—")}</td>
-      <td style="white-space:nowrap"><button class="btn small tailor">Tailor CV</button> <button class="btn small applied">Mark applied</button></td></tr>`;
-    }).join("") + "</tbody>";
+  const shown = rows.slice(0, 300);
+  t.innerHTML = `<thead><tr>${hasMatch ? "<th>Match</th>" : ""}<th>Job</th><th>Location</th><th>Site</th><th>Posted</th><th>CV</th><th></th></tr></thead><tbody>` +
+    shown.map(o => {
+      const fit = o.score != null ? `<span class="tag">${esc(o.score)} · ${esc(o.verdict)}</span>` : (o.fit ? `<span class="tag">${esc(o.fit)} fit</span>` : "");
+      const cv = o.cv ? `<a class="tag ok" href="/cv/${encodeURIComponent(o.cv.id)}" target="_blank" rel="noopener">${icon("check")} ${o.cv.coverage != null ? esc(o.cv.coverage) + "%" : "ready"}</a>` : `<span class="muted">—</span>`;
+      return `<tr data-o="${DATA.opportunities.indexOf(o)}">${hasMatch ? `<td>${ring(o.match ?? 0)}</td>` : ""}
+      <td>${who(o.company, o.title, o.url)}${fit ? `<div style="margin:4px 0 0 47px">${fit}</div>` : ""}</td>
+      <td class="muted" style="min-width:140px">${esc(o.location || "—")}</td><td style="white-space:nowrap">${esc(o.portal)}</td>
+      <td class="num muted" style="white-space:nowrap">${esc(o.posted_date || o.first_seen || "—")}</td><td>${cv}</td>
+      <td><div class="row-actions"><button class="btn small primary build">${icon("wand")} ${o.cv ? "Rebuild" : "Build CV"}</button><button class="btn small applied">Mark applied</button></div></td></tr>`;
+    }).join("") + "</tbody>" + (rows.length > shown.length ? `<tfoot><tr><td colspan="7" class="muted" style="text-align:center">Showing the best ${shown.length} of ${rows.length} - search or filter to narrow down.</td></tr></tfoot>` : "");
 }
 
 // ---------- events ----------
 document.querySelectorAll("nav button").forEach(b => b.addEventListener("click", () => showTab(b.dataset.tab)));
+const TITLES = {
+  dashboard: ["Dashboard", "Your search at a glance: who replied, who is waiting, who ghosted you."],
+  opportunities: ["Opportunities", "Jobs found for you in Paris, best match with your profile first."],
+  applications: ["Applications", "Everything you have sent, with replies and follow-ups."],
+  followups: ["Follow-ups", "Applications that have gone quiet and deserve a nudge."],
+  profile: ["Profile", "Your CV, GitHub projects and skills - the source for every tailored CV."],
+  builder: ["CV builder", "A CV tailored to one job, from your own experience only."],
+};
 function showTab(name) {
   document.querySelectorAll("nav button").forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab === name)));
-  document.querySelectorAll("main > section").forEach(s => s.classList.toggle("hidden", s.id !== `tab-${name}`));
+  document.querySelectorAll("main > section").forEach(s => {
+    const on = s.id === `tab-${name}`;
+    s.classList.toggle("hidden", !on);
+    if (on) { s.classList.remove("enter"); void s.offsetWidth; s.classList.add("enter"); }
+  });
+  const [t, sub] = TITLES[name] || ["", ""];
+  $("#page-title").textContent = t; $("#page-sub").textContent = sub;
+  document.querySelector(".ghost-ctl").classList.toggle("hidden", !["dashboard", "applications", "followups"].includes(name));
   store("tracker.tab", name);
 }
 
 ["#q", "#f-response", "#f-status", "#f-portal", "#f-open"].forEach(s => $(s).addEventListener("input", renderApps));
-["#oq", "#of-portal", "#of-fit"].forEach(s => $(s).addEventListener("input", renderOpps));
+["#oq", "#of-portal", "#of-fit", "#of-cv"].forEach(s => $(s).addEventListener("input", renderOpps));
 $("#ghost-days").addEventListener("change", () => { store("tracker.ghost", $("#ghost-days").value); load(); });
 
 $("#apps-table").addEventListener("change", async (e) => {
@@ -583,9 +820,9 @@ $("#fu-table").addEventListener("click", rowAction);
 $("#opp-table").addEventListener("click", async (e) => {
   const tr = e.target.closest("tr[data-o]"); if (!tr) return;
   const o = DATA.opportunities[Number(tr.dataset.o)];
-  if (e.target.classList.contains("tailor")) { openBuilderFor(o); return; }
-  if (!e.target.classList.contains("applied")) return;
-  if (await edit("add", { company: o.company, role: o.title, status: "applied", channel: o.portal, source: o.url, deadline: o.deadline })) toast(`Added ${o.company} to applications`);
+  const btn = e.target.closest("button"); if (!btn) return;
+  if (btn.classList.contains("build")) { openBuilderFor(o); return; }
+  if (btn.classList.contains("applied")) markApplied(o);
 });
 
 $("#add-form").addEventListener("submit", async (e) => {
@@ -670,6 +907,8 @@ function renderProfile() {
   for (const sec of Object.keys(SECTIONS)) renderSection(sec);
   $("#photo-box").innerHTML = P.photo ? `<img class="photo" alt="Your photo" src="/profile/photo.png?t=${Date.now()}">` : `<div class="photo-empty">No photo</div>`;
   $("#photo-remove").disabled = !P.photo;
+  renderMe();
+  if (!$("#gh-user").value) $("#gh-user").value = (P.basics.github || "").replace(/^https?:\/\/(www\.)?/, "");
 }
 
 function renderSection(sec) {
@@ -820,25 +1059,84 @@ async function fetchPosting(o) {
   } catch (err) { st.textContent = ""; toast(err.message); }
 }
 
-function openBuilderFor(o) {
+async function markApplied(o) {
+  const cvFile = o.cv ? `profile/tailored/${o.cv.id}.json` : "";
+  if (await edit("add", { company: o.company, role: o.title, status: "applied", channel: o.portal, source: o.url, deadline: o.deadline, cv_file: cvFile })) {
+    toast(`${o.company} added to your applications${o.cv ? " with its tailored CV" : ""}`);
+  }
+}
+
+function buildOptions() {
+  return { headline: $("#b-headline").value, max_bullets: Number($("#b-bullets").value), max_projects: Number($("#b-projects").value),
+           include_photo: $("#b-photo").checked, polish: $("#b-polish").checked };
+}
+
+// One click from an opportunity: fetch its posting, tailor, show the CV.
+async function openBuilderFor(o) {
   showTab("builder");
+  if (!PROF || !PROF.has_content) { toast("Import your CV on the Profile tab first"); showTab("profile"); return; }
+  if (dirty) { toast("Save your profile changes first"); showTab("profile"); return; }
   $("#b-opp").value = o.key;
   $("#b-title").value = o.title; $("#b-company").value = o.company; $("#b-posting").value = "";
-  fetchPosting(o);
+  jobCard(o, `<span class="busy">Fetching the posting and tailoring your CV…</span>`);
+  $("#b-build").disabled = true;
+  try {
+    const out = await api("/api/cv/for-opportunity", { key: o.key, ...buildOptions() });
+    if (out.need_paste) {
+      $("#b-fetch-status").innerHTML = `<span class="muted">(this site can't be fetched - <a href="${esc(safeUrl(o.url))}" target="_blank" rel="noopener noreferrer">open the posting</a>, paste it here, then Build)</span>`;
+      jobCard(o, `<div class="warn">${esc(o.portal)} pages can't be read automatically. Open the posting, paste its text on the left, and click <b>Build tailored CV</b>.</div>`);
+      $("#b-posting").focus();
+      return;
+    }
+    $("#b-posting").value = out.posting || "";
+    $("#b-fetch-status").textContent = "(fetched)";
+    PROF.tailored = out.tailored; renderSaved();
+    showResult(out.cv, o);
+    load();
+  } catch (err) { jobCard(o, ""); toast(err.message); }
+  finally { $("#b-build").disabled = false; }
 }
 $("#b-opp").addEventListener("change", () => {
-  const o = oppByKey($("#b-opp").value); if (!o) return;
-  $("#b-title").value = o.title; $("#b-company").value = o.company; $("#b-posting").value = "";
-  fetchPosting(o);
+  const o = oppByKey($("#b-opp").value); if (o) openBuilderFor(o);
 });
+function stepMatch(dir) {
+  const list = DATA.opportunities.slice(0, 150);
+  if (!list.length) return;
+  const i = list.findIndex(o => o.key === $("#b-opp").value);
+  const next = list[(i + dir + list.length) % list.length] || list[0];
+  openBuilderFor(next);
+}
+$("#b-next").addEventListener("click", () => stepMatch(1));
+$("#b-prev").addEventListener("click", () => stepMatch(-1));
+
+function jobCard(o, below) {
+  const u = safeUrl(o && o.url);
+  $("#b-result").innerHTML = (o ? `<div class="job-card">${o.match != null ? ring(o.match) : avatar(o.company)}
+      <div class="grow"><b>${esc(o.title)}</b><span class="muted">${esc(o.company)} · ${esc(o.location || "")} · ${esc(o.portal)}</span></div>
+      ${u ? `<a class="btn small" href="${esc(u)}" target="_blank" rel="noopener noreferrer">${icon("external")} Posting</a>` : ""}
+      <button class="btn small accent" id="b-applied">Mark applied</button></div>` : "") + (below || "");
+  const ap = document.getElementById("b-applied");
+  if (ap) ap.addEventListener("click", () => { const fresh = oppByKey(o.key) || o; markApplied(fresh); });
+}
+
+function showResult(cv, o) {
+  jobCard(o, `<div class="sec-title"><div><h2>Your CV for ${esc(cv.company || "this job")}</h2>
+        <p class="muted" style="margin:4px 0 0">${cv.coverage != null ? `<b class="num">${esc(cv.matched.length)}/${esc(cv.terms_total)}</b> of the skills this posting names are in your profile (${esc(cv.coverage)}%). ` : "No known skills detected in this posting. "}${esc(cv.language)}${cv.polished ? " · polished by Claude" : ""}</p></div>
+        <a class="btn primary" href="/cv/${encodeURIComponent(cv.id)}" target="_blank" rel="noopener">${icon("printer")} Open &amp; save as PDF</a></div>
+      <h3>You have</h3><div class="chips">${cv.matched.map(t => `<span class="chip ok">${esc(t)}</span>`).join("") || `<span class="muted">none detected</span>`}</div>
+      <h3 style="margin-top:14px">Asked for, not in your profile</h3><div class="chips">${cv.missing.map(t => `<span class="chip gap">${esc(t)}</span>`).join("") || `<span class="muted">nothing - full coverage</span>`}</div>
+      <p class="muted" style="font-size:13px">Really have one of these? Add it to your profile (or import the GitHub repo that shows it) and rebuild. Never add what you don't have.</p>
+      <iframe class="cv" title="Tailored CV preview" src="/cv/${encodeURIComponent(cv.id)}"></iframe>`);
+}
 $("#b-fetch").addEventListener("click", () => fetchPosting(oppByKey($("#b-opp").value)));
 
 function renderSaved() {
   const list = (PROF && PROF.tailored) || [];
-  $("#b-saved").innerHTML = list.length ? `<table>${list.map(c => `<tr data-cv="${esc(c.id)}"><td><b>${esc(c.company || "—")}</b><br><span class="muted">${esc(c.job_title || "")}</span></td>
-    <td class="muted" style="white-space:nowrap">${esc(c.created)}${c.coverage != null ? `<br>${esc(c.coverage)}% match` : ""}</td>
-    <td style="white-space:nowrap"><a class="btn small" href="/cv/${encodeURIComponent(c.id)}" target="_blank" rel="noopener">Open</a> <button class="btn small del-cv">Delete</button></td></tr>`).join("")}</table>`
+  $("#b-saved").innerHTML = list.length ? `<table><tbody>${list.map(c => `<tr data-cv="${esc(c.id)}">
+      <td>${who(c.company || "—", c.job_title || "")}<div style="margin:4px 0 0 47px;display:flex;gap:6px;flex-wrap:wrap"><span class="tag num">${esc(c.created)}</span>${c.coverage != null ? `<span class="tag ok">${esc(c.coverage)}% match</span>` : ""}${c.polished ? `<span class="tag">polished</span>` : ""}</div></td>
+      <td><div class="row-actions" style="flex-direction:column;align-items:stretch"><a class="btn small" href="/cv/${encodeURIComponent(c.id)}" target="_blank" rel="noopener">${icon("external")} Open</a><button class="btn small del-cv">Delete</button></div></td></tr>`).join("")}</tbody></table>`
     : `<div class="empty" style="padding:14px">No tailored CVs yet.</div>`;
+  $("#cv-nav-count").textContent = list.length || "";
 }
 $("#b-saved").addEventListener("click", async (e) => {
   if (!e.target.classList.contains("del-cv")) return;
@@ -854,13 +1152,15 @@ $("#b-build").addEventListener("click", async () => {
   $("#b-status").innerHTML = `<span class="busy">${polish ? "Tailoring and polishing with Claude - up to a minute…" : "Tailoring…"}</span>`;
   $("#b-build").disabled = true;
   try {
+    const o = oppByKey($("#b-opp").value);
     const out = await api("/api/cv/tailor", {
       posting: $("#b-posting").value, job_title: $("#b-title").value, company: $("#b-company").value,
-      headline: $("#b-headline").value, max_bullets: Number($("#b-bullets").value), max_projects: Number($("#b-projects").value),
-      include_photo: $("#b-photo").checked, polish,
+      opportunity: o ? o.key : "", ...buildOptions(),
     });
     PROF.tailored = out.tailored; renderSaved();
     const cv = out.cv;
+    showResult(cv, o); $("#b-status").textContent = ""; load();
+    return;
     $("#b-result").innerHTML = `<div class="sec-title"><h2 style="margin:0">${esc(cv.company || "Tailored CV")} — ${esc(cv.job_title || "")}</h2>
         <a class="btn primary" href="/cv/${encodeURIComponent(cv.id)}" target="_blank" rel="noopener">Open &amp; print to PDF</a></div>
       <p class="muted" style="margin-top:0">${cv.coverage != null ? `<b>${esc(cv.matched.length)} of ${esc(cv.terms_total)}</b> skills the posting names are in your profile (${esc(cv.coverage)}%). ` : "No known skills detected in this posting. "}Language: ${esc(cv.language)}${cv.polished ? " · wording polished by Claude" : ""}. Use your browser's Print → Save as PDF.</p>
@@ -873,15 +1173,112 @@ $("#b-build").addEventListener("click", async () => {
   finally { $("#b-build").disabled = false; }
 });
 
+// ---------- hero, identity, theme ----------
+function greeting() {
+  const h = new Date().getHours();
+  return h < 18 ? "Bonjour" : "Bonsoir";
+}
+function renderHero(dueCount) {
+  const name = (P && P.basics.name || "").split(" ")[0];
+  const strong = DATA.opportunities.filter(o => (o.match ?? -1) >= 60).length;
+  const withCv = DATA.opportunities.filter(o => o.cv).length;
+  const hasProfile = PROF && PROF.has_content;
+  $("#hero").innerHTML = `<div><h2>${esc(greeting())}${name ? " " + esc(name) : ""}</h2>
+      <p>${hasProfile ? `${strong} jobs in Paris match your profile strongly. Build a CV for the best ones and send them today.`
+        : "Start by importing your CV and GitHub on the Profile tab - every match and tailored CV is built from it."}</p></div>
+    <div class="hero-stats">
+      <button class="hs" data-go="opportunities"><b>${esc(DATA.opportunities.length)}</b><span>open jobs found</span></button>
+      <button class="hs" data-go="opportunities"><b>${esc(strong)}</b><span>strong matches (60%+)</span></button>
+      <button class="hs" data-go="builder"><b>${esc(withCv)}</b><span>CVs ready</span></button>
+      <button class="hs" data-go="followups"><b>${esc(dueCount)}</b><span>follow-ups due</span></button>
+    </div>`;
+}
+$("#hero").addEventListener("click", (e) => { const b = e.target.closest("[data-go]"); if (b) showTab(b.dataset.go); });
+
+function renderMe() {
+  const b = P ? P.basics : {};
+  const img = P && P.photo ? `<img src="/profile/photo.png?t=${Date.now()}" alt="">` : avatar(b.name || "Me");
+  $("#me").innerHTML = `${img}<div style="min-width:0"><b>${esc(b.name || "Your profile")}</b><span>${esc(b.headline || "Import your CV to start")}</span></div>`;
+  $("#me").style.cursor = "pointer";
+  $("#me").onclick = () => showTab("profile");
+}
+
+function applyTheme(t) {
+  if (t) document.documentElement.dataset.theme = t; else delete document.documentElement.dataset.theme;
+  const dark = t ? t === "dark" : window.matchMedia("(prefers-color-scheme: dark)").matches;
+  $("#theme-btn").innerHTML = icon(dark ? "sun" : "moon");
+  $("#theme-btn").setAttribute("aria-label", dark ? "Switch to light mode" : "Switch to dark mode");
+  if (DATA) render();
+}
+$("#theme-btn").addEventListener("click", () => {
+  const dark = document.documentElement.dataset.theme
+    ? document.documentElement.dataset.theme === "dark"
+    : window.matchMedia("(prefers-color-scheme: dark)").matches;
+  const next = dark ? "light" : "dark";
+  store("tracker.theme", next);
+  applyTheme(next);
+});
+applyTheme(new URLSearchParams(location.search).get("theme") || store("tracker.theme"));
+
+// ---------- GitHub import ----------
+let GH = null;
+async function loadRepos() {
+  const user = $("#gh-user").value.trim();
+  if (!user) { toast("Enter your GitHub username"); return; }
+  $("#gh-status").innerHTML = `<span class="busy">Reading your repositories…</span>`;
+  $("#gh-list").innerHTML = ""; $("#gh-actions").classList.add("hidden");
+  try {
+    GH = await api("/api/github/repos", { user });
+    const n = GH.repos.length;
+    $("#gh-status").innerHTML = `${n} repositories from <b>${esc(GH.user)}</b>. Pick the ones that show what you can do.`;
+    $("#gh-list").innerHTML = GH.repos.map((r, i) => `<label class="repo ${r.has_content && !r.in_profile ? "on" : ""}">
+        <input type="checkbox" data-repo="${esc(r.repo)}" ${r.has_content && !r.in_profile ? "checked" : ""}>
+        <div style="min-width:0"><b>${esc(r.name)}</b> <span class="muted num" style="font-size:12px">${esc(r.pushed)}</span>${r.in_profile ? ` <span class="tag ok">in profile</span>` : ""}
+          <p>${esc(r.description || r.excerpt || "No description or README")}</p>
+          <div class="chips">${r.skills.slice(0, 8).map(s => `<span class="chip">${esc(s)}</span>`).join("")}</div></div></label>`).join("");
+    $("#gh-actions").classList.toggle("hidden", !n);
+    $("#gh-claude").disabled = !(PROF && PROF.claude_available);
+    if ($("#gh-claude").disabled) $("#gh-claude").checked = false;
+  } catch (err) { $("#gh-status").textContent = ""; toast(err.message); }
+}
+$("#gh-load").addEventListener("click", loadRepos);
+$("#gh-user").addEventListener("keydown", (e) => { if (e.key === "Enter") loadRepos(); });
+$("#gh-list").addEventListener("change", (e) => { const l = e.target.closest(".repo"); if (l) l.classList.toggle("on", e.target.checked); });
+$("#gh-import").addEventListener("click", async () => {
+  if (dirty) { toast("Save your profile changes first"); return; }
+  const repos = [...document.querySelectorAll("#gh-list input:checked")].map(i => i.dataset.repo);
+  if (!repos.length) { toast("Pick at least one repository"); return; }
+  const claude = $("#gh-claude").checked;
+  $("#gh-import").disabled = true;
+  $("#gh-status").innerHTML = `<span class="busy">${claude ? `Claude is reading ${repos.length} READMEs - about a minute…` : "Adding projects…"}</span>`;
+  try {
+    const out = await api("/api/github/import", { user: GH.user, repos, method: claude ? "claude" : "local" });
+    PROF = out; P = JSON.parse(JSON.stringify(out.profile)); dirty = false;
+    renderProfile(); load();
+    const g = out.github;
+    $("#gh-status").innerHTML = `Added <b>${g.added}</b> projects${g.updated ? `, updated ${g.updated}` : ""}` +
+      (g.new_skills.length ? ` and ${g.new_skills.length} new skills: ${g.new_skills.map(esc).join(", ")}` : "") + "." +
+      (out.warnings || []).map(w => `<div class="warn">${esc(w)}</div>`).join("");
+    document.querySelectorAll("#gh-list input:checked").forEach(i => { i.checked = false; i.closest(".repo").classList.remove("on"); });
+    document.getElementById("sec-projects").scrollIntoView({ behavior: "smooth", block: "start" });
+  } catch (err) { $("#gh-status").textContent = ""; toast(err.message); }
+  finally { $("#gh-import").disabled = false; }
+});
+
 $("#ghost-days").value = store("tracker.ghost") || 21;
 const TABS = ["dashboard", "applications", "followups", "opportunities", "profile", "builder"];
 const fromHash = () => TABS.includes(location.hash.slice(1)) ? location.hash.slice(1) : null;
 window.addEventListener("hashchange", () => fromHash() && showTab(fromHash()));
 showTab(fromHash() || store("tracker.tab") || "dashboard");
 window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => DATA && render());
-load().catch(() => toast("Could not reach the tracker server - is it still running?"));
-loadProfile().catch(() => {});
+Promise.all([load(), loadProfile()]).then(() => {
+  // Deep link: ?opp=<key>#builder opens the CV builder for that job.
+  const k = new URLSearchParams(location.search).get("opp");
+  const o = k && oppByKey(k);
+  if (o) openBuilderFor(o);
+}).catch(() => toast("Could not reach the tracker server - is it still running?"));
 setInterval(() => { if (document.visibilityState === "visible") load().catch(() => {}); }, 30000);
+
 </script>
 </body>
 </html>
