@@ -1613,7 +1613,7 @@ function renderDrawer() {
     </section>
 
     <section class="panel dw-sec"><div class="sec-title" style="margin-bottom:8px"><h3 style="margin:0">The email to send</h3>
-        ${d.sent ? `<span class="tag ok">${icon("check")} sent ${esc(d.sent.on)}${d.sent.to ? " to " + esc(d.sent.to) : ""}</span>` : ""}</div>
+        <span>${d.gmail_draft ? (d.gmail_draft.stale ? `<span class="tag" title="You edited the email after it went to Gmail">Gmail draft is older - click Update</span> ` : `<span class="tag ok">${icon("check")} in Gmail drafts ${esc(d.gmail_draft.on)}</span> `) : ""}${d.sent ? `<span class="tag ok">${icon("check")} sent ${esc(d.sent.on)}${d.sent.to ? " to " + esc(d.sent.to) : ""}</span>` : ""}</span></div>
       <div class="stack" style="gap:10px">
         <label>To<input id="dw-to" type="email" value="${esc(to)}" placeholder="recruiter@company.fr"></label>
         <label>Subject<input id="dw-subject" value="${esc(draft.subject || "")}"></label>
@@ -1622,6 +1622,7 @@ function renderDrawer() {
           <button class="btn" id="dw-write">${icon("wand")} ${draft.body ? "Rewrite" : "Write it"} with Claude</button>
           <a class="btn primary" id="dw-mailto" href="#">${icon("send")} Open in my mail app</a>
           <button class="btn" id="dw-copy">${icon("check")} Copy</button>
+          <button class="btn" id="dw-gmail" title="Adds this email, with the CV attached, to your Gmail Drafts - it is not sent">${icon("upload")} ${d.gmail_draft ? "Update Gmail draft" : "Put in Gmail drafts"}</button>
           <button class="btn accent" id="dw-sent">Log as sent</button>
         </div>
         <p class="muted" id="dw-note" style="font-size:13px;margin:0">Your mail app opens with everything filled in - attach the CV PDF above, read it once, send.</p>
@@ -1652,6 +1653,14 @@ function renderDrawer() {
     catch (err) { toast(err.message); }
   });
   $("#dw-polish").addEventListener("click", () => prepareJob(true, true));
+  $("#dw-gmail").addEventListener("click", async () => {
+    const b = $("#dw-gmail"); b.disabled = true;
+    try {
+      await api("/api/outreach/save-draft", { key: DRAWER_KEY, to: $("#dw-to").value, subject: $("#dw-subject").value, body: $("#dw-body").value });
+      DRAWER = await api("/api/outreach/gmail-draft", { key: DRAWER_KEY });
+      renderDrawer(); toast("In your Gmail drafts - open Gmail to send it");
+    } catch (err) { toast(err.message); b.disabled = false; }
+  });
   $("#dw-edit").addEventListener("click", () => { const k = DRAWER_KEY; closeJob(); const opp = oppByKey(k); if (opp) openBuilderFor(opp); });
 }
 
@@ -1705,7 +1714,8 @@ async function loadDaily() {
         ? `Last run ${esc(r.date)} (${esc(r.minutes)} min): <b>${esc(r.relevant)}</b> new relevant jobs, <b>${esc(r.prepared)}</b> CVs prepared, <b>${esc(r.drafts)}</b> emails ready to send.`
         : "No daily run yet."}
         ${d.scheduled ? "" : ` To schedule it, run <code>python3 tools/install_daily.py</code> once in a terminal.`}
-        Nothing is sent for you - the emails wait in the Send list.</p></div>
+        ${d.gmail ? ` <span class="tag ok">${icon("check")} Gmail drafts: ${esc(d.gmail)}</span> ${d.gmail_waiting ? `${esc(d.gmail_waiting)} waiting for tomorrow's push.` : ""}` : ` Gmail drafts not connected - run <code>python3 tools/gmail_drafts.py --setup</code> in Terminal.`}
+        Nothing is sent for you.</p></div>
       <button class="btn primary" id="daily-go">${icon("send")} Open the Send list</button></div>`;
   $("#daily-go").addEventListener("click", () => showTab("sendlist"));
 }

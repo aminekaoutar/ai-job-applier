@@ -27,6 +27,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import batch  # noqa: E402
+import gmail_drafts  # noqa: E402
 import job_finder  # noqa: E402
 import profile_store as ps  # noqa: E402
 import tracker_app as ta  # noqa: E402
@@ -91,6 +92,15 @@ def run(base: Path = ps.PROFILE_DIR, seen: Path = ta.STATE, tracker: Path = ta.T
         if todo and not dry_run:
             stats = batch.prepare_all(todo, base, progress=lambda m: None, drafts=True)
 
+        gmail = None
+        if not dry_run and gmail_drafts.load_config(base):
+            try:
+                gmail = gmail_drafts.push(base, (gmail_drafts.load_config(base) or {}).get("max_per_day", gmail_drafts.DEFAULT_MAX))
+                log(base, f"gmail: {gmail['pushed']} drafts added, {gmail['left']} waiting")
+            except gmail_drafts.GmailError as exc:
+                gmail = {"error": str(exc)}
+                log(base, f"gmail: {exc}")
+
         report = {
             "date": date.today().isoformat(), "finished": datetime.now().isoformat(timespec="seconds"),
             "minutes": round((time.time() - started) / 60, 1), "queries": found["queries"],
@@ -98,11 +108,13 @@ def run(base: Path = ps.PROFILE_DIR, seen: Path = ta.STATE, tracker: Path = ta.T
             "prepared": stats.get("cvs", 0), "pdfs": stats.get("pdfs", 0),
             "with_email": stats.get("with_email", 0), "drafts": stats.get("drafts", 0),
             "errors": found.get("errors", []),
+            "gmail_drafts": (gmail or {}).get("pushed"), "gmail_error": (gmail or {}).get("error"),
         }
         (daily_dir(base) / f"{report['date']}.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
         log(base, f"done: {report}")
+        where = f" · {report['gmail_drafts']} in Gmail drafts" if report.get("gmail_drafts") else ""
         notify("Job search - new today",
-               f"{report['new_jobs']} new jobs · {report['prepared']} CVs ready · {report['drafts']} emails to send")
+               f"{report['new_jobs']} new jobs · {report['prepared']} CVs ready · {report['drafts']} emails to send{where}")
         return report
 
 

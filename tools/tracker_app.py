@@ -47,6 +47,7 @@ import github_import  # noqa: E402
 import job_finder  # noqa: E402
 import outreach  # noqa: E402
 import batch  # noqa: E402
+import gmail_drafts  # noqa: E402
 import profile_store as ps  # noqa: E402
 
 PAGE = Path(__file__).resolve().parent / "tracker_app.html"
@@ -449,6 +450,7 @@ def make_handler(tracker: Path, seen: Path, token: str, port_ref: dict, lock: th
             "site_note": rec.get("site_note"),
             "draft": rec.get("draft"),
             "sent": rec.get("sent"),
+            "gmail_draft": rec.get("gmail_draft"),
             "posting": rec.get("posting") or "",
             "cv": {k: cv.get(k) for k in ("id", "coverage", "matched", "missing", "terms_total", "polished", "language",
                                           "from_title")} | {"pdf": pdf_ok} if cv else None,
@@ -560,7 +562,10 @@ def make_handler(tracker: Path, seen: Path, token: str, port_ref: dict, lock: th
                     except (OSError, json.JSONDecodeError):
                         latest = None
                 plist = Path.home() / "Library/LaunchAgents/com.aijobsearch.daily.plist"
-                return self._json(HTTPStatus.OK, {"latest": latest, "scheduled": plist.is_file()})
+                cfg = gmail_drafts.load_config(profile_dir)
+                return self._json(HTTPStatus.OK, {"latest": latest, "scheduled": plist.is_file(),
+                                                  "gmail": (cfg or {}).get("address"),
+                                                  "gmail_waiting": len(gmail_drafts.pending(profile_dir))})
             if url.path == "/api/job":
                 try:
                     return self._json(HTTPStatus.OK, job_view(str(qs.get("key", [""])[0])))
@@ -734,10 +739,23 @@ def make_handler(tracker: Path, seen: Path, token: str, port_ref: dict, lock: th
                                   polish_top=1 if body.get("polish") else 0, drafts=True)
                 return self._json(HTTPStatus.OK, job_view(key))
 
+            if path == "/api/outreach/gmail-draft":
+                key = str(body.get("key") or "")
+                find_opportunity(key)
+                try:
+                    result = gmail_drafts.push(profile_dir, 1, keys=[key])
+                except gmail_drafts.GmailError as exc:
+                    raise ValueError(str(exc)) from exc
+                if not result["pushed"]:
+                    raise ValueError("nothing to put in Gmail - this job needs an address and a written email first")
+                return self._json(HTTPStatus.OK, job_view(key))
+
             if path == "/api/outreach/save-draft":
                 key = str(body.get("key") or "")
                 find_opportunity(key)
                 rec = load_outreach(key)
+                if rec.get("gmail_draft"):  # edited after pushing: Gmail holds an older version
+                    rec["gmail_draft"]["stale"] = True
                 rec["draft"] = {**(rec.get("draft") or {}), "to": str(body.get("to") or "")[:200],
                                 "subject": str(body.get("subject") or "")[:300], "body": str(body.get("body") or "")[:8000],
                                 "edited": True}
