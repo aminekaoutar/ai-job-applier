@@ -82,10 +82,40 @@ def freework_search(query: str, location: str = "paris", page: int = 1, jobage: 
     return out
 
 
+LI_SEARCH = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
+
+
+def linkedin_search_py(query: str, location: str = "paris", page: int = 1, jobage: int = 30) -> list[dict]:
+    """LinkedIn's public guest job search - the endpoint the linkedin-search CLI reads, parsed the same way."""
+    params = {"keywords": query, "location": LINKEDIN_LOCATIONS.get(location, "France"),
+              "start": str((page - 1) * 10)}
+    if jobage and jobage < 9999:
+        params["f_TPR"] = f"r{jobage * 86400}"
+    try:
+        markup = _get_text(f"{LI_SEARCH}?{urllib.parse.urlencode(params)}", LINKEDIN_UA)
+    except Exception:
+        return []
+    out = []
+    for chunk in markup.split('data-entity-urn="urn:li:jobPosting:')[1:]:
+        m = re.match(r"(\d+)", chunk)
+        title = re.search(r'class="base-search-card__title"[^>]*>(.*?)</h3>', chunk, re.S)
+        if not m or not title:
+            continue
+        link = re.search(r'class="base-card__full-link[^"]*"[^>]*href="([^"]+)"', chunk)
+        company = re.search(r'class="base-search-card__subtitle"[^>]*>(.*?)</h4>', chunk, re.S)
+        loc = re.search(r'class="job-search-card__location"[^>]*>(.*?)</span>', chunk, re.S)
+        date = re.search(r'class="job-search-card__listdate[^"]*"[^>]*datetime="([^"]+)"', chunk)
+        url = html.unescape(link.group(1)).split("?")[0] if link else f"https://www.linkedin.com/jobs/view/{m.group(1)}"
+        out.append({"title": html_text(title.group(1)), "company": html_text(company.group(1)) if company else "",
+                    "url": url, "location": html_text(loc.group(1)) if loc else None,
+                    "date": date.group(1) if date else None, "portal": "linkedin-search", "skills": ""})
+    return out
+
+
 def linkedin_search(query: str, location: str = "paris", page: int = 1, jobage: int = 30) -> list[dict]:
     bun = find_bun()
     if not bun:
-        return []
+        return linkedin_search_py(query, location, page, jobage)
     cli = ROOT / ".agents/skills/linkedin-search/cli/src/cli.ts"
     cmd = [bun, "run", str(cli), "search", "-q", query, "-l", LINKEDIN_LOCATIONS.get(location, "France"),
            "--jobage", str(jobage), "--page", str(page), "--format", "json"]
@@ -219,17 +249,17 @@ def fit_label(score: int) -> str:
 
 
 def profile_search(profile: dict, seen: Path, tracker: Path, location: str = "paris",
-                   pages: int = 2, progress=lambda msg: None) -> dict:
+                   pages: int = 2, progress=lambda msg: None, jobage: int = 30) -> dict:
     """Search with keywords from the profile, score each hit, store the new ones."""
     queries = ps.search_queries(profile)
     p_terms, targets = ps.profile_terms(profile), ps.target_words(profile)
     hits, errors = [], []
-    use_linkedin = find_bun() is not None
+    use_linkedin = True  # the CLI with bun, else the same guest endpoint read in Python
     for i, q in enumerate(queries, 1):
         progress(f"Searching '{q}' ({i}/{len(queries)})")
         for page in range(1, pages + 1):
             try:
-                res = freework_search(q, location, page)
+                res = freework_search(q, location, page, jobage)
             except Exception as exc:
                 errors.append(f"Free-Work '{q}': {exc}")
                 break
@@ -238,9 +268,9 @@ def profile_search(profile: dict, seen: Path, tracker: Path, location: str = "pa
                 break
         if use_linkedin:
             for page in range(1, pages + 1):
-                res = linkedin_search(q, location, page)
+                res = linkedin_search(q, location, page, jobage)
                 hits += res
-                time.sleep(1.5)  # keep LinkedIn volume low
+                time.sleep(2)  # keep LinkedIn volume low
                 if len(res) < 10:
                     break
 
@@ -282,9 +312,10 @@ def profile_search(profile: dict, seen: Path, tracker: Path, location: str = "pa
     finally:
         os.unlink(tmp)
     added = stored.get("added", [])
+    new_keys = [j["key"] for j in jobs if j.get("key") in set(added)] if jobs and "key" in jobs[0] else list(added)
     return {
         "queries": queries, "found": len(hits), "added": len(added),
         "relevant": sum(1 for j in jobs if j["status"] == "new" and make_key(j["company"], j["title"], j["url"]) in set(added)),
         "already_known": stored.get("already_seen", 0) + stored.get("already_applied", 0),
-        "linkedin": use_linkedin, "errors": errors,
+        "linkedin": use_linkedin, "errors": errors, "new_keys": new_keys,
     }

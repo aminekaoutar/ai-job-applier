@@ -551,6 +551,16 @@ def make_handler(tracker: Path, seen: Path, token: str, port_ref: dict, lock: th
                 return self._json(HTTPStatus.OK, search_job.status())
             if url.path == "/api/batch/status":
                 return self._json(HTTPStatus.OK, batch_job.status())
+            if url.path == "/api/daily":
+                reports = sorted((profile_dir / "daily").glob("20*.json"))
+                latest = None
+                if reports:
+                    try:
+                        latest = json.loads(reports[-1].read_text(encoding="utf-8"))
+                    except (OSError, json.JSONDecodeError):
+                        latest = None
+                plist = Path.home() / "Library/LaunchAgents/com.aijobsearch.daily.plist"
+                return self._json(HTTPStatus.OK, {"latest": latest, "scheduled": plist.is_file()})
             if url.path == "/api/job":
                 try:
                     return self._json(HTTPStatus.OK, job_view(str(qs.get("key", [""])[0])))

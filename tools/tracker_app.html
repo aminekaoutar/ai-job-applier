@@ -312,6 +312,7 @@ details summary { cursor: pointer; }
     <main>
       <section id="tab-dashboard">
         <div class="hero" id="hero"></div>
+        <div class="panel" id="daily-card" style="margin-bottom:16px"></div>
         <div class="cards" id="cards"></div>
         <div class="grid">
           <div class="panel"><h3>Who replied?</h3><div id="chart-response"></div></div>
@@ -1690,6 +1691,25 @@ function rowOpens(tableSel, attr, keyOf) {
 }
 rowOpens("#opp-table", "data-o", (tr) => DATA.opportunities[Number(tr.dataset.o)]?.key);
 rowOpens("#send-table", "data-k", (tr) => tr.classList.contains("s-detail") ? null : tr.dataset.k);
+// ---------- daily run card ----------
+async function loadDaily() {
+  let d;
+  try { d = await (await fetch("/api/daily")).json(); } catch (e) { return; }
+  const r = d.latest;
+  const sched = d.scheduled
+    ? `<span class="tag ok">${icon("clock")} runs every morning</span>`
+    : `<span class="tag">${icon("clock")} not scheduled yet</span>`;
+  $("#daily-card").innerHTML = `<div class="sec-title" style="margin:0"><div>
+      <h2 style="display:flex;gap:8px;align-items:center">${icon("sparkles")} Daily search ${sched}</h2>
+      <p class="muted" style="margin:4px 0 0">${r
+        ? `Last run ${esc(r.date)} (${esc(r.minutes)} min): <b>${esc(r.relevant)}</b> new relevant jobs, <b>${esc(r.prepared)}</b> CVs prepared, <b>${esc(r.drafts)}</b> emails ready to send.`
+        : "No daily run yet."}
+        ${d.scheduled ? "" : ` To schedule it, run <code>python3 tools/install_daily.py</code> once in a terminal.`}
+        Nothing is sent for you - the emails wait in the Send list.</p></div>
+      <button class="btn primary" id="daily-go">${icon("send")} Open the Send list</button></div>`;
+  $("#daily-go").addEventListener("click", () => showTab("sendlist"));
+}
+loadDaily();
 
 $("#ghost-days").value = store("tracker.ghost") || 21;
 const TABS = ["dashboard", "applications", "followups", "opportunities", "sendlist", "profile", "builder"];
