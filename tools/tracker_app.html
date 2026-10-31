@@ -78,6 +78,9 @@ nav button[aria-selected="true"] { background: var(--sidebar-active); color: #ff
 nav .count { margin-left: auto; font: 600 11px var(--mono); padding: 1px 8px; border-radius: 999px; background: rgba(255,255,255,.10); color: #fff; }
 nav .count.hot { background: var(--accent); color: #111; }
 nav .count:empty { display: none; }
+th button.sort { all: unset; cursor: pointer; display: inline-flex; gap: 4px; align-items: center; }
+th button.sort:hover, th button.sort[aria-pressed="true"] { color: var(--primary); }
+th button.sort:focus-visible { outline: 3px solid var(--ring); border-radius: 4px; }
 .nav-label { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: rgba(199,210,254,.55); padding: 6px 12px 0; }
 .me { margin-top: auto; display: flex; align-items: center; gap: 10px; padding: 10px; border-radius: 12px; background: rgba(255,255,255,.05); }
 .me img, .me .avatar { width: 38px; height: 38px; border-radius: 50%; object-fit: cover; flex: none; }
@@ -341,6 +344,8 @@ details summary { cursor: pointer; }
             <div class="search"><svg class="i"><use href="#i-search"/></svg><input id="oq" type="search" placeholder="Search company, title, city…" aria-label="Search opportunities"></div>
             <select id="of-portal" aria-label="Site"><option value="">All sites</option></select>
             <select id="of-fit" aria-label="Fit"><option value="">Any fit</option><option value="high">High fit</option><option value="medium">Medium fit</option><option value="low">Low fit</option></select>
+<label class="muted" style="display:flex;gap:6px;align-items:center;font-size:14px">Posted<select id="of-posted" aria-label="Posted date"><option value="">any time</option><option value="0">today</option><option value="3">last 3 days</option><option value="7">last 7 days</option><option value="14">last 14 days</option><option value="30">last 30 days</option><option value="old">older than 30 days</option></select></label>
+            <label class="muted" style="display:flex;gap:6px;align-items:center;font-size:14px">Found<select id="of-found" aria-label="Found date"><option value="">any time</option><option value="0">today</option><option value="3">last 3 days</option><option value="7">last 7 days</option><option value="14">last 14 days</option><option value="30">last 30 days</option><option value="old">older than 30 days</option></select></label>
             <label class="muted" style="display:flex;gap:7px;align-items:center;font-size:14px"><input type="checkbox" id="of-cv"> With CV only</label>
             <span class="muted num" id="opp-count"></span>
           </div>
@@ -363,6 +368,8 @@ details summary { cursor: pointer; }
           <div class="toolbar">
             <div class="search"><svg class="i"><use href="#i-search"/></svg><input id="sq" type="search" placeholder="Search company, job, email…" aria-label="Search send list"></div>
             <select id="s-email" aria-label="Email"><option value="">All jobs</option><option value="yes" selected>With an email</option><option value="no">No email published</option></select>
+<label class="muted" style="display:flex;gap:6px;align-items:center;font-size:14px">Posted<select id="s-posted" aria-label="Posted date"><option value="">any time</option><option value="0">today</option><option value="3">last 3 days</option><option value="7">last 7 days</option><option value="14">last 14 days</option><option value="30">last 30 days</option><option value="old">older than 30 days</option></select></label>
+            <label class="muted" style="display:flex;gap:6px;align-items:center;font-size:14px">Found<select id="s-found" aria-label="Found date"><option value="">any time</option><option value="0">today</option><option value="3">last 3 days</option><option value="7">last 7 days</option><option value="14">last 14 days</option><option value="30">last 30 days</option><option value="old">older than 30 days</option></select></label>
             <label class="muted" style="display:flex;gap:7px;align-items:center;font-size:14px"><input type="checkbox" id="s-hide-sent" checked> Hide sent</label>
             <span class="muted num" id="s-count"></span>
           </div>
@@ -800,24 +807,49 @@ function ring(v) {
   return `<div class="ring" style="--v:${Number(v) || 0};--c:${c}" title="Match with your profile"><span>${esc(v)}%</span></div>`;
 }
 
+// Date windows: "" any, "0" today, "3"/"7"/"14"/"30" last N days, "old" older than 30 days.
+function daysAgo(d) {
+  if (!d) return null;
+  const t = Date.parse(String(d).slice(0, 10) + "T00:00:00"), now = Date.parse(DATA.today + "T00:00:00");
+  return Number.isNaN(t) ? null : Math.round((now - t) / 864e5);
+}
+function inWindow(d, win) {
+  if (!win) return true;
+  const n = daysAgo(d);
+  if (n === null) return false;  // unknown date: only "any time" shows it
+  return win === "old" ? n > 30 : n <= Number(win);
+}
+let OPP_SORT = store("tracker.oppsort") || "match";
+function sortHead(key, label) {
+  return `<button class="sort" data-sort="${key}" aria-pressed="${OPP_SORT === key}" title="Sort by ${label.toLowerCase()}, newest first">${esc(label)}${OPP_SORT === key ? " ↓" : ""}</button>`;
+}
+
 function renderOpps() {
   const q = $("#oq").value.trim().toLowerCase(), fp = $("#of-portal").value, ff = $("#of-fit").value, withCv = $("#of-cv").checked;
-  const rows = DATA.opportunities.filter(o => (!q || [o.title, o.company, o.location].join(" ").toLowerCase().includes(q)) && (!fp || o.portal === fp) && (!ff || o.fit === ff) && (!withCv || o.cv));
+  const wp = $("#of-posted").value, wf = $("#of-found").value;
+  store("tracker.of-posted", wp); store("tracker.of-found", wf);
+  const rows = DATA.opportunities.filter(o => (!q || [o.title, o.company, o.location].join(" ").toLowerCase().includes(q)) && (!fp || o.portal === fp) && (!ff || o.fit === ff) && (!withCv || o.cv)
+    && inWindow(o.posted_date, wp) && inWindow(o.first_seen, wf));
+  if (OPP_SORT === "posted" || OPP_SORT === "found") {
+    const f = OPP_SORT === "posted" ? "posted_date" : "first_seen";
+    rows.sort((a, b) => String(b[f] || "").localeCompare(String(a[f] || "")));
+  }
   $("#opp-count").textContent = `${rows.length} / ${DATA.opportunities.length}`;
   const t = $("#opp-table");
   if (!rows.length) { t.innerHTML = `<tr><td class="empty">${icon("sparkles")}<div>${DATA.opportunities.length ? "No job matches these filters." : "No opportunities yet - click \"Find jobs for my profile\" or run /scrape in Claude Code."}</div></td></tr>`; return; }
   const hasMatch = DATA.opportunities.some(o => o.match != null);
   const shown = rows.slice(0, 300);
-  t.innerHTML = `<thead><tr>${hasMatch ? "<th>Match</th>" : ""}<th>Job</th><th>Location</th><th>Site</th><th>Posted</th><th>CV</th><th></th></tr></thead><tbody>` +
+  t.innerHTML = `<thead><tr>${hasMatch ? `<th>${sortHead("match", "Match")}</th>` : ""}<th>Job</th><th>Location</th><th>Site</th><th>${sortHead("posted", "Posted")}</th><th>${sortHead("found", "Found")}</th><th>CV</th><th></th></tr></thead><tbody>` +
     shown.map(o => {
       const fit = o.score != null ? `<span class="tag">${esc(o.score)} · ${esc(o.verdict)}</span>` : (o.fit ? `<span class="tag">${esc(o.fit)} fit</span>` : "");
       const cv = o.cv ? `<a class="tag ok" href="/cv/${encodeURIComponent(o.cv.id)}" target="_blank" rel="noopener">${icon("check")} ${o.cv.coverage != null ? esc(o.cv.coverage) + "%" : "ready"}</a>` : `<span class="muted">—</span>`;
       return `<tr data-o="${DATA.opportunities.indexOf(o)}">${hasMatch ? `<td>${ring(o.match ?? 0)}</td>` : ""}
       <td>${who(o.company, o.title, o.url)}${fit ? `<div style="margin:4px 0 0 47px">${fit}</div>` : ""}</td>
       <td class="muted" style="min-width:140px">${esc(o.location || "—")}</td><td style="white-space:nowrap">${esc(o.portal)}</td>
-      <td class="num muted" style="white-space:nowrap">${esc(o.posted_date || o.first_seen || "—")}</td><td>${cv}</td>
+      <td class="num muted" style="white-space:nowrap" title="Date the job was published">${esc((o.posted_date || "").slice(0, 10) || "—")}</td>
+      <td class="num muted" style="white-space:nowrap" title="Date the tracker found it">${esc((o.first_seen || "").slice(0, 10) || "—")}</td><td>${cv}</td>
       <td><div class="row-actions"><button class="btn small primary build">${icon("wand")} ${o.cv ? "Rebuild" : "Build CV"}</button><button class="btn small reach">${icon("send")} Reach out</button><button class="btn small applied">Mark applied</button></div></td></tr>`;
-    }).join("") + "</tbody>" + (rows.length > shown.length ? `<tfoot><tr><td colspan="7" class="muted" style="text-align:center">Showing the best ${shown.length} of ${rows.length} - search or filter to narrow down.</td></tr></tfoot>` : "");
+    }).join("") + "</tbody>" + (rows.length > shown.length ? `<tfoot><tr><td colspan="8" class="muted" style="text-align:center">Showing the best ${shown.length} of ${rows.length} - search or filter to narrow down.</td></tr></tfoot>` : "");
 }
 
 // ---------- events ----------
@@ -845,7 +877,14 @@ function showTab(name) {
 }
 
 ["#q", "#f-response", "#f-status", "#f-portal", "#f-open"].forEach(s => $(s).addEventListener("input", renderApps));
-["#oq", "#of-portal", "#of-fit", "#of-cv"].forEach(s => $(s).addEventListener("input", renderOpps));
+$("#of-posted").value = store("tracker.of-posted") || "";
+$("#of-found").value = store("tracker.of-found") || "";
+["#oq", "#of-portal", "#of-fit", "#of-cv", "#of-posted", "#of-found"].forEach(s => $(s).addEventListener("input", renderOpps));
+$("#opp-table").addEventListener("click", (e) => {
+  const b = e.target.closest("button.sort"); if (!b) return;
+  e.stopPropagation();
+  OPP_SORT = b.dataset.sort; store("tracker.oppsort", OPP_SORT); renderOpps();
+}, true);
 $("#ghost-days").addEventListener("change", () => { store("tracker.ghost", $("#ghost-days").value); load(); });
 
 $("#apps-table").addEventListener("change", async (e) => {
@@ -1419,7 +1458,11 @@ function mailtoFor(to, d) {
 
 function renderSendList() {
   const q = $("#sq").value.trim().toLowerCase(), only = $("#s-email").value, hideSent = $("#s-hide-sent").checked;
-  const rows = SEND.filter(r =>
+  const wp = $("#s-posted").value, wf = $("#s-found").value;
+  store("tracker.s-posted", wp); store("tracker.s-found", wf);
+  const byKey = DATA ? Object.fromEntries(DATA.opportunities.map(o => [o.key, o])) : {};
+  const dates = (r) => { const o = byKey[r.key] || {}; return [o.posted_date, o.first_seen || r.prepared]; };
+  const rows = SEND.filter(r => inWindow(dates(r)[0], wp) && inWindow(dates(r)[1], wf) &&
     (!q || [r.company, r.title, (r.contacts || []).map(c => c.email).join(" ")].join(" ").toLowerCase().includes(q)) &&
     (only === "" || (only === "yes") === !!(r.contacts && r.contacts.length)) && (!hideSent || !r.sent));
   const withEmail = SEND.filter(r => r.contacts && r.contacts.length).length;
@@ -1491,7 +1534,9 @@ $("#send-table").addEventListener("input", (e) => {
   box.querySelector(".s-mailto").setAttribute("href", mailtoFor(box.querySelector(".s-to").value,
     { subject: box.querySelector(".s-subject").value, body: box.querySelector(".s-body").value }));
 });
-["#sq", "#s-email", "#s-hide-sent"].forEach(s => $(s).addEventListener("input", renderSendList));
+$("#s-posted").value = store("tracker.s-posted") || "";
+$("#s-found").value = store("tracker.s-found") || "";
+["#sq", "#s-email", "#s-hide-sent", "#s-posted", "#s-found"].forEach(s => $(s).addEventListener("input", renderSendList));
 
 async function pollBatch() {
   const st = await (await fetch("/api/batch/status")).json();
