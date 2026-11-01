@@ -342,7 +342,7 @@ details summary { cursor: pointer; }
           </div>
           <div class="toolbar">
             <div class="search"><svg class="i"><use href="#i-search"/></svg><input id="oq" type="search" placeholder="Search company, title, city…" aria-label="Search opportunities"></div>
-            <select id="of-portal" aria-label="Site"><option value="">All sites</option></select>
+            <label class="muted" style="display:flex;gap:6px;align-items:center;font-size:14px">Platform<select id="of-portal" aria-label="Platform"><option value="">All platforms</option></select></label>
             <select id="of-fit" aria-label="Fit"><option value="">Any fit</option><option value="high">High fit</option><option value="medium">Medium fit</option><option value="low">Low fit</option></select>
 <label class="muted" style="display:flex;gap:6px;align-items:center;font-size:14px">Posted<select id="of-posted" aria-label="Posted date"><option value="">any time</option><option value="0">today</option><option value="3">last 3 days</option><option value="7">last 7 days</option><option value="14">last 14 days</option><option value="30">last 30 days</option><option value="old">older than 30 days</option></select></label>
             <label class="muted" style="display:flex;gap:6px;align-items:center;font-size:14px">Found<select id="of-found" aria-label="Found date"><option value="">any time</option><option value="0">today</option><option value="3">last 3 days</option><option value="7">last 7 days</option><option value="14">last 14 days</option><option value="30">last 30 days</option><option value="old">older than 30 days</option></select></label>
@@ -367,6 +367,7 @@ details summary { cursor: pointer; }
           </div>
           <div class="toolbar">
             <div class="search"><svg class="i"><use href="#i-search"/></svg><input id="sq" type="search" placeholder="Search company, job, email…" aria-label="Search send list"></div>
+            <label class="muted" style="display:flex;gap:6px;align-items:center;font-size:14px">Platform<select id="s-portal" aria-label="Platform"><option value="">All platforms</option></select></label>
             <select id="s-email" aria-label="Email"><option value="">All jobs</option><option value="yes" selected>With an email</option><option value="no">No email published</option></select>
 <label class="muted" style="display:flex;gap:6px;align-items:center;font-size:14px">Posted<select id="s-posted" aria-label="Posted date"><option value="">any time</option><option value="0">today</option><option value="3">last 3 days</option><option value="7">last 7 days</option><option value="14">last 14 days</option><option value="30">last 30 days</option><option value="old">older than 30 days</option></select></label>
             <label class="muted" style="display:flex;gap:6px;align-items:center;font-size:14px">Found<select id="s-found" aria-label="Found date"><option value="">any time</option><option value="0">today</option><option value="3">last 3 days</option><option value="7">last 7 days</option><option value="14">last 14 days</option><option value="30">last 30 days</option><option value="old">older than 30 days</option></select></label>
@@ -400,7 +401,7 @@ details summary { cursor: pointer; }
             <div class="search"><svg class="i"><use href="#i-search"/></svg><input id="q" type="search" placeholder="Search company, role, notes…" aria-label="Search applications"></div>
             <select id="f-response" aria-label="Reply"><option value="">All replies</option><option value="responded">Responded</option><option value="waiting">Waiting</option><option value="ghosted">Ghosted</option><option value="not_sent">Not sent (drafted)</option><option value="withdrawn">Withdrawn</option></select>
             <select id="f-status" aria-label="Status"><option value="">All statuses</option></select>
-            <select id="f-portal" aria-label="Site"><option value="">All sites</option></select>
+            <label class="muted" style="display:flex;gap:6px;align-items:center;font-size:14px">Platform<select id="f-portal" aria-label="Platform"><option value="">All platforms</option></select></label>
             <label class="muted" style="display:flex;gap:7px;align-items:center;font-size:14px"><input type="checkbox" id="f-open"> Open only</label>
           </div>
           <div class="table-wrap"><table id="apps-table"></table></div>
@@ -745,8 +746,10 @@ function render() {
 
   const fc = $("#fu-count"); fc.textContent = due.length; fc.classList.toggle("hidden", !due.length);
   fillSelect($("#f-status"), DATA.statuses.map(s => [s, label(s)]), "All statuses");
-  fillSelect($("#f-portal"), [...new Set(apps.map(a => a.portal))].sort().map(p => [p, p]), "All sites");
-  fillSelect($("#of-portal"), [...new Set(DATA.opportunities.map(o => o.portal))].sort().map(p => [p, p]), "All sites");
+  fillSelect($("#f-portal"), platformOptions(apps), "All platforms");
+  if (!$("#of-portal").dataset.restored) { $("#of-portal").dataset.restored = "1"; $("#of-portal").dataset.want = store("tracker.of-portal") || ""; }
+  fillSelect($("#of-portal"), platformOptions(DATA.opportunities), "All platforms");
+  if ($("#of-portal").dataset.want) { $("#of-portal").value = $("#of-portal").dataset.want; $("#of-portal").dataset.want = ""; }
   const st = document.querySelector("#add-form select[name=status]");
   if (!st.options.length) { st.innerHTML = DATA.statuses.map(s => `<option value="${esc(s)}"${s === "applied" ? " selected" : ""}>${esc(label(s))}</option>`).join(""); }
 
@@ -757,6 +760,13 @@ const sum = (o) => Object.values(o).reduce((s, v) => s + v, 0);
 const pct = (a, b) => b ? `${Math.round((a / b) * 100)}%` : "";
 function pill(s) { return `<span class="pill" style="--pc:${cssVar(`--s-${s}`) || cssVar("--c-unknown")}">${esc(label(s) || "—")}</span>`; }
 function rpill(r) { return `<span class="pill" style="--pc:${cssVar(`--c-${r}`)}">${esc(RESP[r] || r)}</span>`; }
+
+// [value, "Platform (count)"] pairs, most jobs first.
+function platformOptions(rows) {
+  const n = {};
+  for (const r of rows) if (r.portal) n[r.portal] = (n[r.portal] || 0) + 1;
+  return Object.entries(n).sort((a, b) => b[1] - a[1]).map(([p, c]) => [p, `${p} (${c})`]);
+}
 
 function fillSelect(sel, pairs, allLabel) {
   const cur = sel.value;
@@ -877,6 +887,7 @@ function showTab(name) {
 }
 
 ["#q", "#f-response", "#f-status", "#f-portal", "#f-open"].forEach(s => $(s).addEventListener("input", renderApps));
+$("#of-portal").addEventListener("input", () => store("tracker.of-portal", $("#of-portal").value));
 $("#of-posted").value = store("tracker.of-posted") || "";
 $("#of-found").value = store("tracker.of-found") || "";
 ["#oq", "#of-portal", "#of-fit", "#of-cv", "#of-posted", "#of-found"].forEach(s => $(s).addEventListener("input", renderOpps));
@@ -1462,7 +1473,12 @@ function renderSendList() {
   store("tracker.s-posted", wp); store("tracker.s-found", wf);
   const byKey = DATA ? Object.fromEntries(DATA.opportunities.map(o => [o.key, o])) : {};
   const dates = (r) => { const o = byKey[r.key] || {}; return [o.posted_date, o.first_seen || r.prepared]; };
-  const rows = SEND.filter(r => inWindow(dates(r)[0], wp) && inWindow(dates(r)[1], wf) &&
+  const sp = $("#s-portal");
+  const want = sp.value || store("tracker.s-portal") || "";
+  fillSelect(sp, platformOptions(SEND), "All platforms");
+  if ([...sp.options].some(o => o.value === want)) sp.value = want;
+  store("tracker.s-portal", sp.value);
+  const rows = SEND.filter(r => (!sp.value || r.portal === sp.value) && inWindow(dates(r)[0], wp) && inWindow(dates(r)[1], wf) &&
     (!q || [r.company, r.title, (r.contacts || []).map(c => c.email).join(" ")].join(" ").toLowerCase().includes(q)) &&
     (only === "" || (only === "yes") === !!(r.contacts && r.contacts.length)) && (!hideSent || !r.sent));
   const withEmail = SEND.filter(r => r.contacts && r.contacts.length).length;
@@ -1536,7 +1552,7 @@ $("#send-table").addEventListener("input", (e) => {
 });
 $("#s-posted").value = store("tracker.s-posted") || "";
 $("#s-found").value = store("tracker.s-found") || "";
-["#sq", "#s-email", "#s-hide-sent", "#s-posted", "#s-found"].forEach(s => $(s).addEventListener("input", renderSendList));
+["#sq", "#s-email", "#s-hide-sent", "#s-posted", "#s-found", "#s-portal"].forEach(s => $(s).addEventListener("input", renderSendList));
 
 async function pollBatch() {
   const st = await (await fetch("/api/batch/status")).json();
