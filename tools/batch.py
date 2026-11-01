@@ -45,8 +45,23 @@ def chrome_path() -> str | None:
     return next((p for p in CHROME_PATHS if Path(p).is_file()), None)
 
 
+def pdf_pages(path: Path) -> int:
+    try:
+        from pypdf import PdfReader
+        return len(PdfReader(str(path)).pages)
+    except Exception:
+        return 0
+
+
 def render_pdf(cv: dict, base: Path) -> Path | None:
-    """profile/tailored/<id>.pdf from the CV, photo embedded; None without a Chrome."""
+    """profile/tailored/<id>.pdf - always one A4 page.
+
+    Prints the CV with the local Chrome, counts the pages, and if it spills
+    over steps through profile_store.fit_variants (least relevant lines
+    dropped first, then tighter spacing) until it fits. The fitted CV is saved
+    back, so the HTML preview, the PDF and the email attachment all match.
+    None without a Chrome.
+    """
     exe = chrome_path()
     if not exe:
         return None
@@ -55,19 +70,28 @@ def render_pdf(cv: dict, base: Path) -> Path | None:
         photo = "data:image/png;base64," + base64.b64encode((base / "photo.png").read_bytes()).decode()
     out = base / "tailored" / f"{cv['id']}.pdf"
     with tempfile.TemporaryDirectory() as d:
-        src = Path(d) / "cv.html"
-        src.write_text(ps.render_cv(cv, photo), encoding="utf-8")
-        tmp = Path(d) / "cv.pdf"
-        try:
-            subprocess.run([exe, "--headless=new", "--disable-gpu", "--no-pdf-header-footer",
-                            f"--user-data-dir={d}/chrome", f"--print-to-pdf={tmp}", src.as_uri()],
-                           capture_output=True, timeout=90)
-        except (OSError, subprocess.TimeoutExpired):
-            return None
-        if not tmp.is_file() or tmp.stat().st_size < 1000:
-            return None
+        src, tmp = Path(d) / "cv.html", Path(d) / "cv.pdf"
+        fitted, last_ok = None, None
+        for variant in ps.fit_variants(cv):
+            src.write_text(ps.render_cv(variant, photo), encoding="utf-8")
+            tmp.unlink(missing_ok=True)
+            try:
+                subprocess.run([exe, "--headless=new", "--disable-gpu", "--no-pdf-header-footer",
+                                f"--user-data-dir={d}/chrome", f"--print-to-pdf={tmp}", src.as_uri()],
+                               capture_output=True, timeout=90)
+            except (OSError, subprocess.TimeoutExpired):
+                return None
+            if not tmp.is_file() or tmp.stat().st_size < 1000:
+                return None
+            last_ok = variant
+            if pdf_pages(tmp) <= 1:
+                fitted = variant
+                break
+        fitted = fitted or last_ok  # the shortest variant if even that spills (keeps the PDF usable)
         out.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(tmp), out)
+    if fitted is not None and (fitted.get("fit_level") or fitted.get("density")) != (cv.get("fit_level") or cv.get("density")):
+        ps.save_tailored(fitted, base)
     return out
 
 

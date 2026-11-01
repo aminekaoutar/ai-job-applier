@@ -187,6 +187,25 @@ class Tailoring(unittest.TestCase):
         self.assertNotIn("<script>alert", html)
         self.assertIn("&lt;script&gt;", html)
 
+    def test_experience_comes_before_skills_on_the_cv(self):
+        html = ps.render_cv(ps.tailor(sample_profile(), self.POSTING, "AI Engineer", "Acme"), None)
+        self.assertLess(html.index("Expérience professionnelle"), html.index("Compétences"))
+        self.assertLess(html.index("Expérience professionnelle"), html.index("Formation"))
+
+    def test_fit_variants_only_shrink_and_keep_known_skills_first(self):
+        p = sample_profile()
+        p["skills"] = ["python-bidi", "Python", "pyperclip", "LangChain"] + [f"Lib{i}" for i in range(20)]
+        cv = ps.tailor(p, self.POSTING, "AI Engineer", "Acme")
+        variants = list(ps.fit_variants(cv))
+        self.assertEqual([v["fit_level"] for v in variants], list(range(len(variants))))
+        sizes = [sum(len(x["bullets"]) for x in v["experience"]) + len(v["projects"]) for v in variants]
+        self.assertEqual(sizes, sorted(sizes, reverse=True))
+        for v in variants:  # nothing invented: every bullet comes from the original
+            for x, orig in zip(v["experience"], cv["experience"]):
+                self.assertTrue(set(x["bullets"]) <= set(orig["bullets"]))
+        self.assertLess(variants[0]["skills"].index("LangChain"), variants[0]["skills"].index("python-bidi")
+                        if "python-bidi" in variants[0]["skills"] else 99)
+
     def test_tailored_ids_cannot_escape_the_folder(self):
         with tempfile.TemporaryDirectory() as d:
             self.assertIsNone(ps.load_tailored("../profile", Path(d)))

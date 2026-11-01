@@ -864,7 +864,8 @@ def tailor(profile: dict, posting: str, job_title: str = "", company: str = "",
     matched_skills = [s for s in skills if terms_in(s) & jd_terms or fold(s) in jd_terms]
     # The posting's skills first, then the rest, capped: a CV skills line is a summary, not an inventory.
     rest = [s for s in skills if s not in matched_skills]
-    rest.sort(key=lambda s: 0 if (terms_in(s) or fold(s) in DISPLAY) else 1)  # known technologies before obscure libs
+    _known_skills()
+    rest.sort(key=lambda s: 0 if is_known_skill(s) else 1)  # known technologies before obscure libs
     skills = (matched_skills + rest)[:max_skills]
 
     matched = [display_term(t) for t in jd_list if t in have]
@@ -974,36 +975,110 @@ def _dates(a: str, b: str) -> str:
     return " – ".join(x for x in (a, b) if x)
 
 
+DENSITY = [  # print-time density levels: base font, line height, page margin (mm), photo size (mm), section gap (px)
+    (10.5, 1.42, 13, 28, 11),
+    (10.0, 1.36, 12, 25, 9),
+    (9.6, 1.32, 11, 22, 8),
+    (9.2, 1.28, 10, 20, 6),
+]
+
+
+def _first_sentences(text: str, n: int) -> str:
+    parts = re.split(r"(?<=[.!?])\s+", (text or "").strip())
+    return " ".join(parts[:n])
+
+
+def is_known_skill(skill: str) -> bool:
+    """A recognised technology by its exact name ("Python", "LangChain"), not a library merely containing one ("python-bidi")."""
+    f = fold(skill).strip()
+    return f in _KNOWN_SKILLS
+
+
+_KNOWN_SKILLS = None
+
+
+def _known_skills() -> set:
+    global _KNOWN_SKILLS
+    if _KNOWN_SKILLS is None:
+        _KNOWN_SKILLS = {fold(t) for t in VOCAB} | {fold(k) for k in SYNONYMS} | {fold(v) for v in DISPLAY.values()}
+    return _KNOWN_SKILLS
+
+
+def fit_variants(cv: dict):
+    """Ever-shorter copies of a CV for the one-page fit, least relevant lines dropped first.
+
+    Tailoring already ranks bullets and projects by relevance, so trimming from
+    the end of each list removes what matters least for this job. Nothing is
+    rewritten or added - only dropped, and the density level tightens spacing.
+    """
+    import copy
+
+    def variant(level: int, density: int, exp_first: int, exp_rest: int, proj: int, proj_bullets: int,
+                proj_skills: bool, edu_details: int, summary_sentences: int | None, skills: int, certs: int):
+        v = copy.deepcopy(cv)
+        v["fit_level"], v["density"] = level, density
+        for i, x in enumerate(v.get("experience", [])):
+            x["bullets"] = x["bullets"][: exp_first if i < 2 else exp_rest]
+        v["projects"] = v.get("projects", [])[:proj]
+        for p in v["projects"]:
+            p["bullets"] = p["bullets"][:proj_bullets]
+            if not proj_skills:
+                p["skills"] = []
+        for ed in v.get("education", []):
+            ed["details"] = ed["details"][:edu_details]
+        if summary_sentences is not None:
+            v["basics"]["summary"] = _first_sentences(v["basics"].get("summary", ""), summary_sentences)
+        _known_skills()
+        ordered = sorted(v.get("skills", []), key=lambda x: 0 if is_known_skill(x) else 1)  # stable: matched-first order kept
+        v["skills"] = ordered[:skills]
+        v["certifications"] = v.get("certifications", [])[:certs]
+        return v
+
+    yield variant(0, 0, 4, 4, 3, 3, True, 2, None, 18, 4)
+    yield variant(1, 1, 4, 3, 3, 2, True, 2, None, 16, 4)
+    yield variant(2, 1, 3, 2, 2, 2, False, 1, None, 15, 3)
+    yield variant(3, 2, 3, 2, 2, 2, False, 1, 3, 14, 3)
+    yield variant(4, 2, 3, 1, 2, 1, False, 0, 2, 12, 2)
+    yield variant(5, 3, 2, 1, 1, 1, False, 0, 2, 12, 2)
+    yield variant(6, 3, 2, 0, 0, 0, False, 0, 2, 10, 1)
+
+
 def render_cv(cv: dict, photo_url: str | None) -> str:
-    """A self-contained, printable A4 CV page (single column, ATS-friendly)."""
+    """A self-contained, printable A4 CV (single column, ATS-friendly).
+
+    Order: header and summary, then experience, projects, education, and the
+    skills / certifications / languages block last. `cv["density"]` (0-3,
+    set by the one-page fit) tightens type and spacing.
+    """
     L = LABELS.get(cv.get("language"), LABELS["English"])
     b = cv["basics"]
     e = escape
+    font, lh, margin, photo, gap = DENSITY[min(max(int(cv.get("density") or 0), 0), len(DENSITY) - 1)]
     contact = [x for x in (b.get("location"), b.get("email"), b.get("phone"), b.get("linkedin"), b.get("github"), b.get("website")) if x]
     parts = [f"""<!doctype html><html lang="{'fr' if cv.get('language') == 'French' else 'en'}"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{e(b.get('name') or 'CV')} - {e(cv.get('job_title') or 'CV')}</title>
 <style>
-@page {{ size: A4; margin: 14mm 14mm; }}
+@page {{ size: A4; margin: {margin}mm {margin}mm; }}
 * {{ box-sizing: border-box; }}
-body {{ margin: 0; background: #e9ecef; color: #1d232b; font: 10.5pt/1.42 "Helvetica Neue", Arial, sans-serif; }}
-.page {{ width: 210mm; max-width: calc(100% - 24px); min-height: 297mm; margin: 12px auto; background: #fff; padding: 14mm; box-shadow: 0 2px 12px rgba(0,0,0,.12); }}
-header {{ display: flex; gap: 16px; align-items: center; border-bottom: 2px solid #1f4e79; padding-bottom: 10px; margin-bottom: 10px; }}
-header img {{ width: 30mm; height: 30mm; object-fit: cover; border-radius: 50%; }}
-h1 {{ margin: 0; font-size: 21pt; letter-spacing: .01em; }}
-.headline {{ color: #1f4e79; font-weight: 600; font-size: 12pt; margin-top: 2px; }}
-.contact {{ color: #4a5562; font-size: 9pt; margin-top: 4px; }}
-h2 {{ font-size: 10.5pt; text-transform: uppercase; letter-spacing: .08em; color: #1f4e79; margin: 12px 0 5px; border-bottom: 1px solid #d5dde6; padding-bottom: 2px; }}
-.entry {{ margin-bottom: 7px; break-inside: avoid; }}
+body {{ margin: 0; background: #e9ecef; color: #1d232b; font: {font}pt/{lh} "Helvetica Neue", Arial, sans-serif; }}
+.page {{ width: 210mm; max-width: calc(100% - 24px); min-height: 297mm; margin: 12px auto; background: #fff; padding: {margin}mm; box-shadow: 0 2px 12px rgba(0,0,0,.12); }}
+header {{ display: flex; gap: 14px; align-items: center; border-bottom: 2px solid #1f4e79; padding-bottom: {gap}px; margin-bottom: {gap}px; }}
+header img {{ width: {photo}mm; height: {photo}mm; object-fit: cover; border-radius: 50%; flex: none; }}
+h1 {{ margin: 0; font-size: {font * 1.95:.1f}pt; letter-spacing: .01em; line-height: 1.1; }}
+.headline {{ color: #1f4e79; font-weight: 600; font-size: {font * 1.12:.1f}pt; margin-top: 2px; }}
+.contact {{ color: #4a5562; font-size: {font * .86:.1f}pt; margin-top: 3px; }}
+h2 {{ font-size: {font:.1f}pt; text-transform: uppercase; letter-spacing: .08em; color: #1f4e79; margin: {gap + 2}px 0 4px; border-bottom: 1px solid #d5dde6; padding-bottom: 2px; }}
+.entry {{ margin-bottom: {max(gap - 3, 3)}px; break-inside: avoid; }}
 .row {{ display: flex; justify-content: space-between; gap: 10px; }}
-.row b {{ font-size: 10.5pt; }}
-.when {{ color: #4a5562; white-space: nowrap; font-size: 9.5pt; }}
-.sub {{ color: #4a5562; font-style: italic; font-size: 9.5pt; }}
-ul {{ margin: 2px 0 0 16px; padding: 0; }}
-li {{ margin: 1px 0; }}
-.summary {{ margin: 0 0 4px; }}
-.skills {{ margin: 0; }}
-@media print {{ body {{ background: #fff; }} .page {{ margin: 0; box-shadow: none; width: auto; min-height: 0; padding: 0; }} }}
+.when {{ color: #4a5562; white-space: nowrap; font-size: {font * .9:.1f}pt; }}
+.sub {{ color: #4a5562; font-style: italic; font-size: {font * .9:.1f}pt; }}
+ul {{ margin: 2px 0 0 15px; padding: 0; }}
+li {{ margin: 0.5px 0; }}
+.summary {{ margin: 0 0 2px; }}
+.line {{ margin: 0 0 2px; }}
+.line b {{ color: #1f4e79; }}
+@media print {{ body {{ background: #fff; }} .page {{ margin: 0; box-shadow: none; width: auto; max-width: none; min-height: 0; padding: 0; }} }}
 </style></head><body><div class="page">
 <header>{f'<img src="{e(photo_url)}" alt="">' if photo_url else ''}<div>
 <h1>{e(b.get('name') or '')}</h1>
@@ -1011,8 +1086,6 @@ li {{ margin: 1px 0; }}
 <div class="contact">{' · '.join(e(c) for c in contact)}</div></div></header>"""]
     if b.get("summary"):
         parts.append(f'<p class="summary">{e(b["summary"])}</p>')
-    if cv.get("skills"):
-        parts.append(f'<h2>{e(L["skills"])}</h2><p class="skills">{e(" · ".join(cv["skills"]))}</p>')
     if cv.get("experience"):
         parts.append(f'<h2>{e(L["experience"])}</h2>')
         for x in cv["experience"]:
@@ -1026,9 +1099,8 @@ li {{ margin: 1px 0; }}
         for x in cv["projects"]:
             head = e(x["name"]) + (f' — {e(x["role"])}' if x.get("role") else "")
             parts.append(f'<div class="entry"><div class="row"><b>{head}</b><span class="when">{e(_dates(x["start"], x["end"]))}</span></div>'
-                         + (f'<div class="sub">{e(x["url"])}</div>' if x.get("url") else "")
                          + ("<ul>" + "".join(f"<li>{e(t)}</li>" for t in x["bullets"]) + "</ul>" if x["bullets"] else "")
-                         + (f'<div class="sub">{e(", ".join(x["skills"]))}</div>' if x.get("skills") else "")
+                         + (f'<div class="sub">{e(", ".join(x["skills"][:8]))}</div>' if x.get("skills") else "")
                          + "</div>")
     if cv.get("education"):
         parts.append(f'<h2>{e(L["education"])}</h2>')
@@ -1037,12 +1109,16 @@ li {{ margin: 1px 0; }}
                          f'<span class="when">{e(_dates(x["start"], x["end"]))}</span></div>'
                          + ("<ul>" + "".join(f"<li>{e(t)}</li>" for t in x["details"]) + "</ul>" if x["details"] else "")
                          + "</div>")
+    tail = []
+    if cv.get("skills"):
+        tail.append(f'<p class="line">{e(" · ".join(cv["skills"]))}</p>')
     if cv.get("certifications"):
-        parts.append(f'<h2>{e(L["certifications"])}</h2><ul>' + "".join(
-            f'<li>{e(c["name"])}{" — " + e(c["issuer"]) if c.get("issuer") else ""}{" (" + e(c["date"]) + ")" if c.get("date") else ""}</li>'
-            for c in cv["certifications"]) + "</ul>")
+        tail.append(f'<p class="line"><b>{e(L["certifications"])} :</b> ' + " · ".join(
+            e(c["name"]) + (f' ({e(c["issuer"])})' if c.get("issuer") else "") for c in cv["certifications"]) + "</p>")
     if cv.get("languages"):
-        parts.append(f'<h2>{e(L["languages"])}</h2><p class="skills">' + " · ".join(
+        tail.append(f'<p class="line"><b>{e(L["languages"])} :</b> ' + " · ".join(
             e(l["language"]) + (f' ({e(l["level"])})' if l.get("level") else "") for l in cv["languages"]) + "</p>")
+    if tail:
+        parts.append(f'<h2>{e(L["skills"])}</h2>' + "".join(tail))
     parts.append("</div></body></html>")
     return "".join(parts)
