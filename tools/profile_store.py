@@ -1054,7 +1054,21 @@ def render_cv(cv: dict, photo_url: str | None) -> str:
     b = cv["basics"]
     e = escape
     font, lh, margin, photo, gap = DENSITY[min(max(int(cv.get("density") or 0), 0), len(DENSITY) - 1)]
-    contact = [x for x in (b.get("location"), b.get("email"), b.get("phone"), b.get("linkedin"), b.get("github"), b.get("website")) if x]
+    def link(text: str, kind: str) -> str:
+        """Contact item as a clickable link in the PDF; the visible text stays as written."""
+        t = text.strip()
+        if kind == "email":
+            href = f"mailto:{t}"
+        elif kind == "phone":
+            href = "tel:" + re.sub(r"[^+0-9]", "", t)
+        else:
+            href = t if re.match(r"https?://", t, re.I) else f"https://{t}"
+        if not re.match(r"(mailto:[^\s\"<>]+@[^\s\"<>]+|tel:\+?[0-9]{6,}|https://[^\s\"<>]+)$", href):
+            return e(t)
+        return f'<a href="{e(href)}">{e(t)}</a>'
+
+    contact = [e(b["location"])] if b.get("location") else []
+    contact += [link(b[k], k) for k in ("email", "phone", "linkedin", "github", "website") if b.get(k)]
     parts = [f"""<!doctype html><html lang="{'fr' if cv.get('language') == 'French' else 'en'}"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{e(b.get('name') or 'CV')} - {e(cv.get('job_title') or 'CV')}</title>
@@ -1068,6 +1082,7 @@ header img {{ width: {photo}mm; height: {photo}mm; object-fit: cover; border-rad
 h1 {{ margin: 0; font-size: {font * 1.95:.1f}pt; letter-spacing: .01em; line-height: 1.1; }}
 .headline {{ color: #1f4e79; font-weight: 600; font-size: {font * 1.12:.1f}pt; margin-top: 2px; }}
 .contact {{ color: #4a5562; font-size: {font * .86:.1f}pt; margin-top: 3px; }}
+.contact a {{ color: inherit; text-decoration: none; }}
 h2 {{ font-size: {font:.1f}pt; text-transform: uppercase; letter-spacing: .08em; color: #1f4e79; margin: {gap + 2}px 0 4px; border-bottom: 1px solid #d5dde6; padding-bottom: 2px; }}
 .entry {{ margin-bottom: {max(gap - 3, 3)}px; break-inside: avoid; }}
 .row {{ display: flex; justify-content: space-between; gap: 10px; }}
@@ -1083,7 +1098,7 @@ li {{ margin: 0.5px 0; }}
 <header>{f'<img src="{e(photo_url)}" alt="">' if photo_url else ''}<div>
 <h1>{e(b.get('name') or '')}</h1>
 <div class="headline">{e(b.get('headline') or '')}</div>
-<div class="contact">{' · '.join(e(c) for c in contact)}</div></div></header>"""]
+<div class="contact">{' · '.join(contact)}</div></div></header>"""]
     if b.get("summary"):
         parts.append(f'<p class="summary">{e(b["summary"])}</p>')
     if cv.get("experience"):
