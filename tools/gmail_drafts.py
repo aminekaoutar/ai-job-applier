@@ -106,9 +106,17 @@ def remove_draft(imap: imaplib.IMAP4_SSL, folder: str, message_id: str) -> int:
     return len(uids)
 
 
+def recipient(rec: dict) -> str | None:
+    """The draft's own "To", else the best address that is not a guess."""
+    to = ((rec.get("draft") or {}).get("to") or "").strip()
+    if to:
+        return to
+    return next((c["email"] for c in rec.get("contacts") or [] if c.get("kind") != "guess"), None)
+
+
 def build_message(sender: str, sender_name: str, rec: dict, base: Path) -> EmailMessage:
     draft = rec["draft"]
-    to = (draft.get("to") or rec["contacts"][0]["email"]).strip()
+    to = recipient(rec)
     msg = EmailMessage()
     msg["From"] = formataddr((sender_name, sender)) if sender_name else sender
     msg["To"] = to
@@ -126,7 +134,7 @@ def build_message(sender: str, sender_name: str, rec: dict, base: Path) -> Email
 def pending(base: Path) -> list[dict]:
     """Prepared jobs with an address and a draft, not pushed and not sent - best match first."""
     rows = [r for r in batch.Store(base).all().values()
-            if r.get("contacts") and (r.get("draft") or {}).get("body") and not r.get("gmail_draft") and not r.get("sent")]
+            if recipient(r) and (r.get("draft") or {}).get("body") and not r.get("gmail_draft") and not r.get("sent")]
     return sorted(rows, key=lambda r: -(r.get("match") or 0))
 
 
@@ -140,7 +148,7 @@ def push(base: Path = ps.PROFILE_DIR, max_drafts: int = DEFAULT_MAX, keys: list[
     rows = pending(base)
     if keys is not None:
         rows = [r for r in batch.Store(base).all().values() if r.get("key") in set(keys)
-                and r.get("contacts") and (r.get("draft") or {}).get("body")]
+                and recipient(r) and (r.get("draft") or {}).get("body")]
     rows = rows[:max_drafts]
     if not rows:
         return {"pushed": 0, "folder": None, "left": len(pending(base))}

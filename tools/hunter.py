@@ -207,6 +207,14 @@ def enrich_record(rec: dict, cache_dir: Path) -> dict:
     return rec
 
 
+def save_key(key: str) -> None:
+    """Store the key in the macOS Keychain (the only place it is kept)."""
+    r = subprocess.run(["security", "add-generic-password", "-U", "-s", SERVICE, "-a", "hunter", "-w", key],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        raise HunterError(f"could not save the key to the Keychain: {r.stderr.strip()}")
+
+
 def setup() -> int:
     print("Hunter.io setup - your API key is stored in the macOS Keychain, nowhere else.")
     print("Find it at https://hunter.io/api-keys (a free account works).")

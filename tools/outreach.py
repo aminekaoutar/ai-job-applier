@@ -86,6 +86,32 @@ def spelled_emails(text: str, company: str) -> set[str]:
     return out
 
 
+PATTERNS = ["{first}.{last}", "{f}{last}", "{first}", "{first}{last}", "{f}.{last}"]
+
+
+def _slug_name(text: str) -> str:
+    return re.sub(r"[^a-z]", "", ps.fold(text))
+
+
+def guess_emails(name: str, domain: str, pattern: str | None = None) -> list[dict]:
+    """Probable addresses for a named person: the company's known pattern first, else the
+    usual French corporate formats. Always marked as unverified guesses."""
+    parts = [p for p in re.split(r"[\s-]+", (name or "").strip()) if p and not p.endswith(".")]
+    if len(parts) < 2 or not domain:
+        return []  # an abbreviated last name ("Kindiaba K.") cannot be turned into an address
+    first, last = _slug_name(parts[0]), _slug_name("".join(parts[1:]))
+    if not first or not last:
+        return []
+    patterns = [pattern] if pattern and "{" in pattern else PATTERNS[:3]
+    out = []
+    for pat in patterns:
+        local = pat.replace("{first}", first).replace("{last}", last).replace("{f}", first[0]).replace("{l}", last[0])
+        if re.fullmatch(r"[a-z0-9._-]+", local):
+            out.append({"email": f"{local}@{domain}", "kind": "guess", "name": name,
+                        "via": f"probable address ({'company pattern ' + pattern if pattern else 'common format'}) - unverified"})
+    return out
+
+
 def rank(email: str) -> int:
     local = email.split("@")[0]
     return 0 if RECRUIT.search(local) else 1 if GENERIC.search(local) else 2

@@ -161,6 +161,8 @@ def prepare_all(opps: list[dict], base: Path, progress=lambda msg: None, force: 
             details = job_finder.posting_details(opp["url"])
             rec["posting"] = details["text"][:20000]
             rec["company_url"] = details.get("company_url")
+            if details.get("hiring_team"):
+                rec["hiring_team"] = details["hiring_team"]
         posting = rec["posting"]
         from_title = len(posting.strip()) < 30
         stats["from_title"] += from_title

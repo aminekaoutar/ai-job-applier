@@ -445,6 +445,15 @@ details summary { cursor: pointer; }
                 <button class="btn primary" id="gh-import"><svg class="i"><use href="#i-plus"/></svg> Add selected to my projects</button>
               </div>
             </div>
+            <div class="panel" id="connections">
+              <h2 style="margin-bottom:12px">Connections</h2>
+              <div class="stack" style="gap:10px">
+                <div><b>Hunter.io</b> <span id="hunter-status" class="muted"></span>
+                  <p class="muted" style="margin:4px 0 8px;font-size:13px">Finds recruiters and hiring managers with verified emails. Get your key at <a href="https://hunter.io/api-keys" target="_blank" rel="noopener noreferrer">hunter.io/api-keys</a> (free plan works). It is stored in your Mac's Keychain.</p>
+                  <div class="toolbar" style="margin:0"><input id="hunter-key" type="password" autocomplete="off" placeholder="Paste your Hunter API key" aria-label="Hunter API key" style="flex:1;min-width:0"><button class="btn" id="hunter-save">Connect</button></div></div>
+                <div><b>Gmail drafts</b> <span id="gmail-status" class="muted"></span></div>
+              </div>
+            </div>
             <div class="panel">
               <h2 style="margin-bottom:12px">Photo</h2>
               <div id="photo-box"></div>
@@ -1586,6 +1595,7 @@ let DRAWER = null;
 let SAVE_T = null;
 
 const ROLE = {
+  guess: ["Probable address - unverified guess", "built from the person's name and the company's address format"],
   recruiter: ["Recruiter / HR (found by Hunter)", "the person handling hiring"],
   "hiring-manager": ["Likely hiring manager (found by Hunter)", "senior person in the team"],
   posting: ["Address given in the posting", "the recruiter handling this job"],
@@ -1650,8 +1660,8 @@ function renderDrawer() {
   const who = best ? `<div class="dw-to">
         <div class="dw-role">${esc(ROLE[best.kind]?.[0] || "Contact")}</div>
         ${best.name ? `<div style="font-weight:600">${esc(best.name)}${best.position ? ` <span class="muted" style="font-weight:400">· ${esc(best.position)}</span>` : ""}</div>` : ""}
-        <div class="dw-email num">${esc(best.email)}</div>
-        <div class="muted" style="font-size:13px">${esc(best.via || ROLE[best.kind]?.[1] || "")}${best.verified ? " · verified" : ""} · <a href="${esc(safeUrl(best.source))}" target="_blank" rel="noopener noreferrer">where it was found</a>${best.linkedin ? ` · <a href="${esc(safeUrl(best.linkedin.startsWith("http") ? best.linkedin : "https://www.linkedin.com/in/" + best.linkedin))}" target="_blank" rel="noopener noreferrer">LinkedIn</a>` : ""}</div>
+        <div class="dw-email num">${esc(best.email)}${best.kind === "guess" ? ` <span class="tag" style="vertical-align:middle">unverified guess</span>` : ""}</div>
+        <div class="muted" style="font-size:13px">${esc(best.via || ROLE[best.kind]?.[1] || "")}${best.verified ? " · verified" : ""}${safeUrl(best.source) ? ` · <a href="${esc(safeUrl(best.source))}" target="_blank" rel="noopener noreferrer">where it was found</a>` : ""}${best.linkedin ? ` · <a href="${esc(safeUrl(best.linkedin.startsWith("http") ? best.linkedin : "https://www.linkedin.com/in/" + best.linkedin))}" target="_blank" rel="noopener noreferrer">LinkedIn</a>` : ""}</div>
       </div>
       ${contacts.length > 1 ? `<div class="chips" style="margin-top:8px">${contacts.slice(1).map(c => `<button class="chip dw-alt" data-email="${esc(c.email)}" title="${esc([ROLE[c.kind]?.[0], c.position, c.confidence ? c.confidence + "%" : ""].filter(Boolean).join(" · "))}">${esc(c.name ? c.name + " · " + c.email : c.email)}</button>`).join("")}</div>` : ""}`
     : `<div class="warn" style="margin:0">${esc(o.company)} publishes no email address${site ? " (its site uses a contact form)" : ""}. Reach the people below on LinkedIn, or apply through the posting.</div>`;
@@ -1659,13 +1669,17 @@ function renderDrawer() {
   $("#drawer-body").innerHTML = head + `
     <section class="panel dw-sec"><h3>Send it to</h3>${who}
       <div class="dw-links">
-        <button class="btn small primary" id="dw-hunter" title="Uses one of your Hunter searches (results are kept 30 days)">${icon("search")} ${d.hunter ? "Search Hunter again" : "Find the recruiter with Hunter"}</button>
+        <button class="btn small primary" id="dw-hunter" title="Hiring team on the posting, Hunter (if connected), then probable addresses">${icon("search")} ${d.find_person ? "Search again" : "Find the recruiter / manager"}</button>
         <a class="btn small" href="${esc(liSearch(`${o.company} talent acquisition recrutement`))}" target="_blank" rel="noopener noreferrer">${icon("user")} Recruiter on LinkedIn</a>
         <a class="btn small" href="${esc(liSearch(managerQuery(o)))}" target="_blank" rel="noopener noreferrer">${icon("user")} Hiring manager on LinkedIn</a>
         ${site ? `<a class="btn small" href="${esc(site)}" target="_blank" rel="noopener noreferrer">${icon("external")} ${esc(site.replace(/^https?:\/\//, "").replace(/\/$/, ""))}</a>` : ""}
       </div>
       ${d.site_note ? `<p class="muted" style="font-size:12px;margin:6px 0 0">Website ${esc(d.site_note)}.</p>` : ""}
-      <p class="muted" id="dw-hunter-note" style="font-size:12px;margin:6px 0 0">${d.hunter ? `Hunter searched ${esc(d.hunter.domain)} on ${esc(d.hunter.on)}: ${esc(d.hunter.found)} people with ${70}%+ confidence${d.hunter.pattern ? ` (address pattern ${esc(d.hunter.pattern)}@${esc(d.hunter.domain)})` : ""}.` : (d.hunter_ready ? "" : "Hunter not connected - run <code>python3 tools/hunter.py --setup</code> in Terminal.")}</p>
+      ${(d.hiring_team || []).length ? `<div style="margin-top:12px"><div class="dw-role">Hiring team on the posting</div>${d.hiring_team.map(p => `<div style="display:flex;justify-content:space-between;gap:10px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)">
+          <div><b>${esc(p.name)}</b>${p.headline ? ` <span class="muted">· ${esc(p.headline)}</span>` : ""}</div>
+          <a class="btn small" href="${esc(safeUrl(p.profile))}" target="_blank" rel="noopener noreferrer">${icon("send")} Message on LinkedIn</a></div>`).join("")}</div>` : ""}
+      ${(d.find_person?.notes || []).map(n => `<p class="muted" style="font-size:12px;margin:6px 0 0">${esc(n)}</p>`).join("")}
+      <p class="muted" id="dw-hunter-note" style="font-size:12px;margin:6px 0 0">${d.hunter ? `Hunter searched ${esc(d.hunter.domain)} on ${esc(d.hunter.on)}: ${esc(d.hunter.found)} people with ${70}%+ confidence${d.hunter.pattern ? ` (address pattern ${esc(d.hunter.pattern)}@${esc(d.hunter.domain)})` : ""}.` : (d.hunter_ready || d.find_person ? "" : "Hunter not connected - add your key in Profile > Connections for verified recruiter emails.")}</p>
     </section>
 
     <section class="panel dw-sec"><div class="sec-title" style="margin-bottom:8px"><h3 style="margin:0">Your CV for this job</h3>
@@ -1722,10 +1736,10 @@ function renderDrawer() {
   $("#dw-hunter").addEventListener("click", async () => {
     const b = $("#dw-hunter"); b.disabled = true; b.innerHTML = `<span class="busy">Asking Hunter…</span>`;
     try {
-      DRAWER = await api("/api/outreach/hunter", { key: DRAWER_KEY });
-      const q = DRAWER.hunter_quota;
+      DRAWER = await api("/api/outreach/find-person", { key: DRAWER_KEY });
       renderDrawer(); loadSendList();
-      toast(`Hunter: ${DRAWER.hunter.found} people found${q && q.available != null ? ` · ${q.available - (q.used || 0)} searches left` : ""}`);
+      const people = (DRAWER.contacts || []).filter(c => ["recruiter", "hiring-manager", "guess"].includes(c.kind)).length + (DRAWER.hiring_team || []).length;
+      toast(people ? `Found ${people} people to contact` : "No named recruiter found - use the LinkedIn links below");
     } catch (err) { toast(err.message); renderDrawer(); }
   });
   $("#dw-gmail").addEventListener("click", async () => {
@@ -1795,6 +1809,29 @@ async function loadDaily() {
   $("#daily-go").addEventListener("click", () => showTab("sendlist"));
 }
 loadDaily();
+// ---------- Profile > Connections ----------
+async function loadSettings() {
+  let s;
+  try { s = await (await fetch("/api/settings")).json(); } catch (e) { return; }
+  $("#hunter-status").innerHTML = s.hunter ? `<span class="tag ok">${icon("check")} connected</span>` : `<span class="tag">not connected</span>`;
+  $("#hunter-key").placeholder = s.hunter ? "Connected - paste a new key to replace it" : "Paste your Hunter API key";
+  $("#gmail-status").innerHTML = s.gmail ? `<span class="tag ok">${icon("check")} ${esc(s.gmail)}</span>`
+    : `<span class="tag">not connected</span> <span style="font-size:13px">- run <code>python3 tools/gmail_drafts.py --setup</code> in Terminal (it asks for a Google app password)</span>`;
+}
+$("#hunter-save").addEventListener("click", async () => {
+  const key = $("#hunter-key").value.trim();
+  if (!key) { toast("Paste your Hunter API key first"); return; }
+  $("#hunter-save").disabled = true;
+  try {
+    const out = await api("/api/settings/hunter", { key });
+    $("#hunter-key").value = "";
+    const q = out.quota || {};
+    toast(`Hunter connected${q.available != null ? ` - ${q.available - (q.used || 0)} searches left this month` : ""}`);
+    loadSettings();
+  } catch (err) { toast(err.message); }
+  finally { $("#hunter-save").disabled = false; }
+});
+loadSettings();
 
 $("#ghost-days").value = store("tracker.ghost") || 21;
 const TABS = ["dashboard", "applications", "followups", "opportunities", "sendlist", "profile", "builder"];

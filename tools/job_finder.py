@@ -230,6 +230,23 @@ def _div_by_class(markup: str, cls: str) -> str | None:
     return markup[m.end():i - 6]
 
 
+def linkedin_hiring_team(markup: str) -> list[dict]:
+    """People LinkedIn shows under "Meet the hiring team" on a public job page: name, headline, profile."""
+    i = markup.find("message-the-recruiter")
+    if i == -1:
+        return []
+    block = markup[i:i + 6000]
+    people = []
+    for m in re.finditer(r'href="(https://[a-z]{2,3}\.linkedin\.com/in/[^"?#]+)', block):
+        chunk = block[m.end():m.end() + 1500]
+        texts = [t for t in (html_text(x) for x in re.findall(r">([^<>]{2,120})<", chunk)) if t and len(t) > 1]
+        name = texts[0] if texts else None
+        headline = next((t for t in texts[1:] if t != name and not re.match(r"(?i)send|envoyer|message", t)), None)
+        if name and m.group(1) not in {p["profile"] for p in people}:
+            people.append({"name": name, "headline": headline, "profile": m.group(1)})
+    return people[:3]
+
+
 def linkedin_posting(job_id: str) -> dict:
     """LinkedIn's public guest job page - the endpoint the linkedin-search CLI reads."""
     html_ = _get_text(f"https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{job_id}", LINKEDIN_UA)
@@ -239,7 +256,8 @@ def linkedin_posting(job_id: str) -> dict:
     text = html_text(body)
     head = html_text(title.group(1)) if title else ""
     return {"text": f"{head}\n\n{text}".strip() if text else "", "company_url": None,
-            "company": html_text(company.group(1)) if company else None, "emails": []}
+            "company": html_text(company.group(1)) if company else None, "emails": [],
+            "hiring_team": linkedin_hiring_team(html_)}
 
 
 def _jsonld_jobposting(markup: str) -> dict | None:

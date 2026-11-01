@@ -25,6 +25,7 @@ Usage:
 
 import argparse
 import base64
+import os
 import csv
 import hashlib
 import json
@@ -453,6 +454,8 @@ def make_handler(tracker: Path, seen: Path, token: str, port_ref: dict, lock: th
             "sent": rec.get("sent"),
             "gmail_draft": rec.get("gmail_draft"),
             "hunter": rec.get("hunter"),
+            "hiring_team": rec.get("hiring_team"),
+            "find_person": rec.get("find_person"),
             "hunter_ready": hunter.api_key() is not None,
             "posting": rec.get("posting") or "",
             "cv": {k: cv.get(k) for k in ("id", "coverage", "matched", "missing", "terms_total", "polished", "language",
@@ -556,6 +559,9 @@ def make_handler(tracker: Path, seen: Path, token: str, port_ref: dict, lock: th
                 return self._json(HTTPStatus.OK, search_job.status())
             if url.path == "/api/batch/status":
                 return self._json(HTTPStatus.OK, batch_job.status())
+            if url.path == "/api/settings":
+                cfg = gmail_drafts.load_config(profile_dir) or {}
+                return self._json(HTTPStatus.OK, {"hunter": hunter.api_key() is not None, "gmail": cfg.get("address")})
             if url.path == "/api/daily":
                 reports = sorted((profile_dir / "daily").glob("20*.json"))
                 latest = None
@@ -740,6 +746,61 @@ def make_handler(tracker: Path, seen: Path, token: str, port_ref: dict, lock: th
                     save_outreach(key, rec)
                 batch.prepare_all([opp], profile_dir, force=bool(body.get("rebuild")),
                                   polish_top=1 if body.get("polish") else 0, drafts=True)
+                return self._json(HTTPStatus.OK, job_view(key))
+
+            if path == "/api/settings/hunter":
+                key = str(body.get("key") or "").strip()
+                if not re.fullmatch(r"[A-Za-z0-9]{20,64}", key):
+                    raise ValueError("that does not look like a Hunter API key")
+                os.environ["HUNTER_API_KEY"] = key
+                try:
+                    q = hunter.quota()
+                except hunter.HunterError as exc:
+                    os.environ.pop("HUNTER_API_KEY", None)
+                    raise ValueError(str(exc)) from exc
+                hunter.save_key(key)
+                return self._json(HTTPStatus.OK, {"ok": True, "quota": q})
+
+            if path == "/api/outreach/find-person":
+                key = str(body.get("key") or "")
+                opp = find_opportunity(key)
+                rec = load_outreach(key)
+                if not rec.get("cv_id"):
+                    raise ValueError("prepare this job first")
+                notes = []
+                # LinkedIn hiring team (one page read, only when not known yet)
+                if "linkedin.com" in opp["url"] and "hiring_team" not in rec:
+                    m = job_finder.LI_JOB.match(opp["url"])
+                    try:
+                        page = job_finder._get_text(f"https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{m.group(1)}",
+                                                    job_finder.LINKEDIN_UA) if m else ""
+                        rec["hiring_team"] = job_finder.linkedin_hiring_team(page)
+                    except Exception as exc:
+                        notes.append(f"LinkedIn page not readable now ({exc})")
+                # Hunter, when connected
+                pattern = (rec.get("hunter") or {}).get("pattern")
+                if hunter.api_key():
+                    try:
+                        rec = hunter.enrich_record(rec, profile_dir / "cache")
+                        pattern = rec["hunter"].get("pattern")
+                    except hunter.HunterError as exc:
+                        notes.append(f"Hunter: {exc}")
+                else:
+                    notes.append("Hunter not connected - add your key in Profile > Connections for verified recruiter emails")
+                # probable addresses for named hiring-team members
+                domain = hunter.domain_of(rec.get("site") or rec.get("company_url") or "")
+                if not domain:
+                    guess = outreach.company_site_from_name(rec.get("company") or "")
+                    domain = hunter.domain_of(guess["url"]) if guess else None
+                have = {c["email"] for c in rec.get("contacts") or []}
+                for person in rec.get("hiring_team") or []:
+                    for g in outreach.guess_emails(person["name"], domain, pattern):
+                        if g["email"] not in have:
+                            g["position"], g["linkedin"] = person.get("headline"), person.get("profile")
+                            rec.setdefault("contacts", []).append(g)
+                            have.add(g["email"])
+                rec["find_person"] = {"on": date.today().isoformat(), "notes": notes}
+                save_outreach(key, rec)
                 return self._json(HTTPStatus.OK, job_view(key))
 
             if path == "/api/outreach/hunter":
