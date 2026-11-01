@@ -9,16 +9,19 @@ Every `/scrape` run covers these four sites for **Paris / Île-de-France**, in t
 
 | Site | How `/scrape` reaches it | Paris scoping |
 |------|--------------------------|---------------|
-| **LinkedIn** | `linkedin-search` CLI | `-l "Paris, Île-de-France, France"` |
-| **Welcome to the Jungle** | WebSearch `site:welcometothejungle.com` - robots.txt disallows its search URLs, so no CLI; individual job pages (`/fr/companies/<co>/jobs/<slug>`) may be fetched for details | `Paris` in every query; job slugs end in `_paris` |
+| **LinkedIn** | `linkedin-search` CLI, or the tracker's search (below) without bun | `-l "Paris, Île-de-France, France"` |
+| **Free-Work** | `free-work-search` CLI, or the tracker's search | `-l "Paris"` |
+| **HelloWork** | The tracker's search reads its static keyword / job-title listing pages (allowed by robots.txt; its search URLs are not) and each posting's schema.org data | the Paris and Île-de-France listing pages |
+| **Welcome to the Jungle** | WebSearch `site:welcometothejungle.com` - robots.txt disallows its search URLs and its pages render in the browser, so no CLI | `Paris` in every query; job slugs end in `_paris` |
+| **France Travail** | WebSearch `site:candidat.francetravail.fr/offres/recherche/detail` - index results are often old, so keep only offers whose page still opens; the free official API (francetravail.io) is the reliable route once credentials exist | `Paris` / `75` in every query |
 | **Indeed** | WebSearch `site:fr.indeed.com` - Indeed blocks automated fetches (HTTP 403), so keep the search-result link and title, never fetch the page | `Paris` in every query |
-| **HelloWork** | WebSearch `site:hellowork.com` - robots.txt disallows its search pages; individual postings (`/fr-fr/emplois/<id>.html`) may be fetched for details | `Paris` in every query |
 
-Plus `free-work-search -l "Paris"` (French tech board) on every run, since it is CLI-backed and cheap.
+**Step 0 of every `/scrape` for this market:** run `python3 tools/daily.py --dry-run` first. It searches Free-Work, LinkedIn and HelloWork with the profile's keywords and stores new jobs through `scrape_state.py`, the same history `/scrape` uses - so those three need no WebSearch. Then run the WebSearch queries below for **Welcome to the Jungle, France Travail and Indeed**, verify each URL still opens, and store them with `portal` set to `welcometothejungle`, `francetravail` or `indeed`. The tracker (`python3 tools/tracker_app.py`) and the next daily run then build each one's CV, recruiting email and draft.
+
 
 **Volume: cast a wide net.** Treat every `/scrape` as `broad` - run **all** query categories, not just the top 3, and page through each CLI query (up to 3 pages: `--page 1..3`) until a page comes back short. A run like this yields 300+ unique Paris postings; `/rank` and the tracker's Opportunities tab (fit filter) narrow them down afterwards. Keep LinkedIn paced (a short pause between calls) - volume comes from many queries, not hammering one portal.
 
-Tag every result with its site as the `portal` (`linkedin`, `welcometothejungle`, `indeed`, `hellowork`, `free-work`) so the tracker dashboard (`python3 tools/tracker_app.py`) can show which sites produce jobs and responses.
+Tag every result with its site as the `portal` (`linkedin`, `welcometothejungle`, `indeed`, `hellowork`, `free-work`, `francetravail`) so the tracker dashboard (`python3 tools/tracker_app.py`) can show which sites produce jobs and responses.
 
 ## Installed portal CLIs (primary for `/scrape`)
 

@@ -112,6 +112,80 @@ def linkedin_search_py(query: str, location: str = "paris", page: int = 1, jobag
     return out
 
 
+# HelloWork: its search URLs are disallowed by robots.txt, but its static keyword / job-title
+# listing pages are allowed. These exist for Paris and the Île-de-France towns below (checked
+# 2026-11-01); each lists ~20 current offers. Not every keyword has a page - unknown ones 404.
+HW_BASE = "https://www.hellowork.com"
+HW_PAGES = {
+    "paris": ["mot-cle_ia-ville_paris-75000", "mot-cle_intelligence-artificielle-ville_paris-75000",
+              "mot-cle_data-ville_paris-75000", "mot-cle_data-science-ville_paris-75000",
+              "mot-cle_python-ville_paris-75000", "metier_data-scientist-ville_paris-75000",
+              "metier_developpeur-python-ville_paris-75000"],
+    "ile-de-france": ["mot-cle_ia-ville_courbevoie-92400", "mot-cle_ia-ville_levallois-perret-92300",
+                      "mot-cle_ia-ville_velizy-villacoublay-78140", "mot-cle_ia-ville_elancourt-78990"],
+}
+HW_PAGES["france"] = HW_PAGES["paris"] + HW_PAGES["ile-de-france"] + [
+    f"mot-cle_ia-ville_{c}" for c in ("lyon-69000", "toulouse-31000", "nantes-44000", "lille-59000", "bordeaux-33000")]
+HW_PAGES["ile-de-france"] = HW_PAGES["paris"] + HW_PAGES["ile-de-france"]
+AGE = re.compile(r"il y a\s+(\d+)\s+(minute|heure|jour|semaine|mois)", re.I)
+
+
+def _age_to_date(text: str) -> str | None:
+    from datetime import date, timedelta
+    m = AGE.search(text or "")
+    if not m:
+        return date.today().isoformat() if re.search(r"aujourd|instant", text or "", re.I) else None
+    n, unit = int(m.group(1)), m.group(2).lower()
+    days = {"minute": 0, "heure": 0, "jour": n, "semaine": 7 * n, "mois": 30 * n}[unit]
+    return (date.today() - timedelta(days=days)).isoformat()
+
+
+def hellowork_listing(page: str) -> list[dict]:
+    """Offers on one HelloWork listing page (robots.txt-checked)."""
+    import robots_check
+    url = f"{HW_BASE}/fr-fr/emploi/{page}.html"
+    if robots_check.gate(url)[0] != 0:
+        return []
+    try:
+        markup = _get_text(url)
+    except Exception:
+        return []
+    out = []
+    # Cards: <a ... href="/fr-fr/emplois/ID.html" title="..." data-cy="offerTitle"> <h3><span>TITLE</span><span>COMPANY</span></h3>
+    for m in re.finditer(r'<a\b[^>]*href="(/fr-fr/emplois/\d+\.html)"[^>]*data-cy="offerTitle"[^>]*>(.*?)</a>', markup, re.S):
+        href, inner = m.groups()
+        rest = markup[m.end():m.end() + 3000]
+        nxt = rest.find('data-cy="offerTitle"')
+        rest = rest if nxt == -1 else rest[:nxt]
+        spans = re.findall(r"<span[^>]*>(.*?)</span>", inner, re.S)
+        if not spans:
+            continue
+        loc = re.search(r'data-cy="localisationCard"[^>]*>(.*?)</div>', rest, re.S)
+        contract = re.search(r'data-cy="contractCard"[^>]*>(.*?)</div>', rest, re.S)
+        out.append({
+            "title": html_text(spans[0]), "company": html_text(spans[1]) if len(spans) > 1 else "",
+            "url": HW_BASE + href, "location": html_text(loc.group(1)) if loc else None,
+            "contract": html_text(contract.group(1)) if contract else None,
+            "date": _age_to_date(rest), "portal": "hellowork", "skills": "",
+        })
+    return out
+
+
+def hellowork_search(location: str = "paris", jobage: int = 30, pause: float = 1.5) -> list[dict]:
+    from datetime import date, timedelta
+    cutoff = (date.today() - timedelta(days=jobage)).isoformat() if jobage and jobage < 9999 else ""
+    seen, out = set(), []
+    for i, page in enumerate(HW_PAGES.get(location, HW_PAGES["paris"])):
+        if i:
+            time.sleep(pause)
+        for job in hellowork_listing(page):
+            if job["url"] in seen or (cutoff and job["date"] and job["date"] < cutoff):
+                continue
+            seen.add(job["url"])
+            out.append(job)
+    return out
+
+
 def linkedin_search(query: str, location: str = "paris", page: int = 1, jobage: int = 30) -> list[dict]:
     bun = find_bun()
     if not bun:
@@ -169,7 +243,8 @@ def linkedin_posting(job_id: str) -> dict:
 
 
 def _jsonld_jobposting(markup: str) -> dict | None:
-    for blk in re.findall(r'<script[^>]*type="application/ld\+json"[^>]*>(.*?)</script>', markup, re.S | re.I):
+    # The type is sometimes HTML-escaped: application/ld&#x2B;json (HelloWork).
+    for blk in re.findall(r'<script[^>]*type="application/ld(?:\+|&#x2B;|&#43;)json"[^>]*>(.*?)</script>', markup, re.S | re.I):
         try:
             data = json.loads(blk.strip())
         except json.JSONDecodeError:
@@ -273,6 +348,12 @@ def profile_search(profile: dict, seen: Path, tracker: Path, location: str = "pa
                 time.sleep(2)  # keep LinkedIn volume low
                 if len(res) < 10:
                     break
+
+    progress("Reading HelloWork listings")
+    try:
+        hits += hellowork_search(location, jobage)
+    except Exception as exc:
+        errors.append(f"HelloWork: {exc}")
 
     today = date.today().isoformat()
     jobs, keys = [], set()

@@ -86,7 +86,7 @@ PORTALS = (
 PORTAL_KEYS = {
     "linkedin-search": "LinkedIn", "linkedin": "LinkedIn",
     "welcometothejungle": "Welcome to the Jungle", "wttj": "Welcome to the Jungle",
-    "indeed": "Indeed", "hellowork": "HelloWork",
+    "indeed": "Indeed", "hellowork": "HelloWork", "francetravail": "France Travail", "france-travail": "France Travail",
     "free-work-search": "Free-Work", "free-work": "Free-Work", "freework": "Free-Work",
     "freehire-search": "freehire", "freehire": "freehire",
 }
