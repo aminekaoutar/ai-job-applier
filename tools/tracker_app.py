@@ -48,6 +48,7 @@ import job_finder  # noqa: E402
 import outreach  # noqa: E402
 import batch  # noqa: E402
 import gmail_drafts  # noqa: E402
+import hunter  # noqa: E402
 import profile_store as ps  # noqa: E402
 
 PAGE = Path(__file__).resolve().parent / "tracker_app.html"
@@ -451,6 +452,8 @@ def make_handler(tracker: Path, seen: Path, token: str, port_ref: dict, lock: th
             "draft": rec.get("draft"),
             "sent": rec.get("sent"),
             "gmail_draft": rec.get("gmail_draft"),
+            "hunter": rec.get("hunter"),
+            "hunter_ready": hunter.api_key() is not None,
             "posting": rec.get("posting") or "",
             "cv": {k: cv.get(k) for k in ("id", "coverage", "matched", "missing", "terms_total", "polished", "language",
                                           "from_title")} | {"pdf": pdf_ok} if cv else None,
@@ -738,6 +741,24 @@ def make_handler(tracker: Path, seen: Path, token: str, port_ref: dict, lock: th
                 batch.prepare_all([opp], profile_dir, force=bool(body.get("rebuild")),
                                   polish_top=1 if body.get("polish") else 0, drafts=True)
                 return self._json(HTTPStatus.OK, job_view(key))
+
+            if path == "/api/outreach/hunter":
+                key = str(body.get("key") or "")
+                find_opportunity(key)
+                rec = load_outreach(key)
+                if not rec.get("cv_id"):
+                    raise ValueError("prepare this job first")
+                try:
+                    rec = hunter.enrich_record(rec, profile_dir / "cache")
+                except hunter.HunterError as exc:
+                    raise ValueError(str(exc)) from exc
+                save_outreach(key, rec)
+                view = job_view(key)
+                try:
+                    view["hunter_quota"] = hunter.quota()
+                except hunter.HunterError:
+                    view["hunter_quota"] = None
+                return self._json(HTTPStatus.OK, view)
 
             if path == "/api/outreach/gmail-draft":
                 key = str(body.get("key") or "")

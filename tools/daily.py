@@ -28,6 +28,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import batch  # noqa: E402
 import gmail_drafts  # noqa: E402
+import hunter  # noqa: E402
 import job_finder  # noqa: E402
 import profile_store as ps  # noqa: E402
 import tracker_app as ta  # noqa: E402
@@ -92,6 +93,26 @@ def run(base: Path = ps.PROFILE_DIR, seen: Path = ta.STATE, tracker: Path = ta.T
         if todo and not dry_run:
             stats = batch.prepare_all(todo, base, progress=lambda m: None, drafts=True)
 
+        found_people = 0
+        if not dry_run and hunter.api_key():
+            budget = int(json.loads((daily_dir(base) / "hunter.json").read_text()).get("max_per_day", 5)) \
+                if (daily_dir(base) / "hunter.json").is_file() else 5
+            store = batch.Store(base)
+            want = sorted((r for r in store.all().values()
+                           if r.get("cv_id") and not r.get("hunter") and not r.get("sent") and (r.get("match") or 0) >= 60
+                           and not any(c.get("kind") in ("posting", "recruiter", "recruiting") for c in r.get("contacts") or [])),
+                          key=lambda r: -(r.get("match") or 0))[:budget]
+            for rec in want:
+                try:
+                    rec = hunter.enrich_record(rec, base / "cache")
+                    store.save(rec["key"], rec)
+                    found_people += rec["hunter"]["found"]
+                except hunter.HunterError as exc:
+                    log(base, f"hunter: {exc}")
+                    if "quota" in str(exc).lower() or "key" in str(exc).lower():
+                        break
+            log(base, f"hunter: {len(want)} companies searched, {found_people} people found")
+
         gmail = None
         if not dry_run and gmail_drafts.load_config(base):
             try:
@@ -109,6 +130,7 @@ def run(base: Path = ps.PROFILE_DIR, seen: Path = ta.STATE, tracker: Path = ta.T
             "with_email": stats.get("with_email", 0), "drafts": stats.get("drafts", 0),
             "errors": found.get("errors", []),
             "gmail_drafts": (gmail or {}).get("pushed"), "gmail_error": (gmail or {}).get("error"),
+            "hunter_people": found_people,
         }
         (daily_dir(base) / f"{report['date']}.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
         log(base, f"done: {report}")
