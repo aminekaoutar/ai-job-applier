@@ -561,7 +561,13 @@ def make_handler(tracker: Path, seen: Path, token: str, port_ref: dict, lock: th
                 return self._json(HTTPStatus.OK, batch_job.status())
             if url.path == "/api/settings":
                 cfg = gmail_drafts.load_config(profile_dir) or {}
-                return self._json(HTTPStatus.OK, {"hunter": hunter.api_key() is not None, "gmail": cfg.get("address")})
+                f = profile_dir / "daily" / "regions.json"
+                try:
+                    chosen = json.loads(f.read_text(encoding="utf-8")).get("regions") if f.is_file() else ["paris"]
+                except (OSError, json.JSONDecodeError):
+                    chosen = ["paris"]
+                return self._json(HTTPStatus.OK, {"hunter": hunter.api_key() is not None, "gmail": cfg.get("address"),
+                                                  "regions": chosen, "region_labels": job_finder.REGION_LABELS})
             if url.path == "/api/daily":
                 reports = sorted((profile_dir / "daily").glob("20*.json"))
                 latest = None
@@ -748,6 +754,13 @@ def make_handler(tracker: Path, seen: Path, token: str, port_ref: dict, lock: th
                                   polish_top=1 if body.get("polish") else 0, drafts=True)
                 return self._json(HTTPStatus.OK, job_view(key))
 
+            if path == "/api/settings/regions":
+                chosen = [r for r in body.get("regions") or [] if r in job_finder.LOCATIONS] or ["paris"]
+                f = profile_dir / "daily" / "regions.json"
+                f.parent.mkdir(parents=True, exist_ok=True)
+                f.write_text(json.dumps({"regions": chosen}), encoding="utf-8")
+                return self._json(HTTPStatus.OK, {"regions": chosen})
+
             if path == "/api/settings/hunter":
                 key = str(body.get("key") or "").strip()
                 if not re.fullmatch(r"[A-Za-z0-9]{20,64}", key):
@@ -933,7 +946,7 @@ def make_handler(tracker: Path, seen: Path, token: str, port_ref: dict, lock: th
                     raise ValueError("add your CV on the Profile tab first")
                 location = str(body.get("location") or "paris")
                 if location not in job_finder.LOCATIONS:
-                    raise ValueError("location must be paris, ile-de-france or france")
+                    raise ValueError("unknown search area")
                 started = search_job.start(lambda progress: job_finder.profile_search(
                     profile, seen, tracker, location, pages=2, progress=progress))
                 return self._json(HTTPStatus.OK if started else HTTPStatus.CONFLICT,

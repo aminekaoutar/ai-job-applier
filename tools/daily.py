@@ -60,6 +60,17 @@ def notify(title: str, text: str) -> None:
         pass
 
 
+def regions(base: Path) -> list[str]:
+    """Regions the daily search covers (profile/daily/regions.json), Paris by default."""
+    f = daily_dir(base) / "regions.json"
+    try:
+        chosen = json.loads(f.read_text(encoding="utf-8")).get("regions") if f.is_file() else None
+    except (OSError, json.JSONDecodeError):
+        chosen = None
+    chosen = [r for r in (chosen or ["paris"]) if r in job_finder.LOCATIONS]
+    return chosen or ["paris"]
+
+
 def opportunities(seen: Path, tracker: Path, base: Path) -> list[dict]:
     _, rows, _ = ta.read_tracker(tracker)
     pairs = {(ta.norm(r.get("company")), ta.norm(r.get("role"))) for r in rows if ta.norm(r.get("company"))}
@@ -82,10 +93,14 @@ def run(base: Path = ps.PROFILE_DIR, seen: Path = ta.STATE, tracker: Path = ta.T
             log(base, "no profile yet - import your CV in the tracker first")
             return {"error": "no profile"}
 
-        log(base, f"searching ({', '.join(ps.search_queries(profile))})")
-        found = job_finder.profile_search(profile, seen, tracker, location, pages=2, jobage=DAYS,
-                                          progress=lambda m: None)
-        log(base, f"search: {found['found']} results, {found['added']} new, {found['relevant']} relevant")
+        found = {"queries": ps.search_queries(profile), "found": 0, "added": 0, "relevant": 0, "errors": []}
+        for region in ([location] if location != "paris" else regions(base)):
+            log(base, f"searching {region} ({', '.join(found['queries'])})")
+            r = job_finder.profile_search(profile, seen, tracker, region, pages=2, jobage=DAYS, progress=lambda m: None)
+            for k in ("found", "added", "relevant"):
+                found[k] += r[k]
+            found["errors"] += r.get("errors", [])
+            log(base, f"search {region}: {r['found']} results, {r['added']} new, {r['relevant']} relevant")
 
         todo = [o for o in opportunities(seen, tracker, base) if not batch.Store(base).load(o["key"]).get("pdf")]
         log(base, f"{len(todo)} jobs to prepare")

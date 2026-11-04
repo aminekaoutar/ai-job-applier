@@ -33,8 +33,12 @@ from job_key import make_key  # noqa: E402
 ROOT = Path(__file__).resolve().parent.parent
 FW_API = "https://www.free-work.com/api"
 UA = "Mozilla/5.0 (compatible; ai-job-search-tracker/1.0)"
-LOCATIONS = {"paris": "fr~ile-de-france~paris~", "ile-de-france": "fr~ile-de-france~~", "france": "fr~~~"}
-LINKEDIN_LOCATIONS = {"paris": "Paris, Île-de-France, France", "ile-de-france": "Île-de-France, France", "france": "France"}
+LOCATIONS = {"paris": "fr~ile-de-france~paris~", "ile-de-france": "fr~ile-de-france~~", "france": "fr~~~",
+             "luxembourg": "lu~~~", "switzerland": "ch~~~"}
+LINKEDIN_LOCATIONS = {"paris": "Paris, Île-de-France, France", "ile-de-france": "Île-de-France, France", "france": "France",
+                      "luxembourg": "Luxembourg", "switzerland": "Switzerland"}
+REGION_LABELS = {"paris": "Paris", "ile-de-france": "Île-de-France", "france": "All France",
+                 "luxembourg": "Luxembourg", "switzerland": "Switzerland"}
 
 
 def find_bun() -> str | None:
@@ -175,7 +179,7 @@ def hellowork_search(location: str = "paris", jobage: int = 30, pause: float = 1
     from datetime import date, timedelta
     cutoff = (date.today() - timedelta(days=jobage)).isoformat() if jobage and jobage < 9999 else ""
     seen, out = set(), []
-    for i, page in enumerate(HW_PAGES.get(location, HW_PAGES["paris"])):
+    for i, page in enumerate(HW_PAGES.get(location, [])):  # HelloWork is France-only
         if i:
             time.sleep(pause)
         for job in hellowork_listing(page):

@@ -336,12 +336,13 @@ details summary { cursor: pointer; }
           <div class="sec-title">
             <div><h2>Found for you, not applied yet</h2><p class="muted" id="search-status" style="margin:4px 0 0">Ranked by how well each job title fits your profile. Build a tailored CV in one click.</p></div>
             <div class="toolbar" style="margin:0">
-              <select id="search-loc" aria-label="Search area"><option value="paris">Paris</option><option value="ile-de-france">Île-de-France</option><option value="france">All France</option></select>
+              <select id="search-loc" aria-label="Search area"><option value="paris">Paris</option><option value="ile-de-france">Île-de-France</option><option value="france">All France</option><option value="luxembourg">Luxembourg</option><option value="switzerland">Switzerland</option></select>
               <button class="btn primary" id="search-btn"><svg class="i"><use href="#i-search"/></svg> Find jobs for my profile</button>
             </div>
           </div>
           <div class="toolbar">
             <div class="search"><svg class="i"><use href="#i-search"/></svg><input id="oq" type="search" placeholder="Search company, title, city…" aria-label="Search opportunities"></div>
+            <label class="muted" style="display:flex;gap:6px;align-items:center;font-size:14px">Country<select id="of-country" aria-label="Country"><option value="">All countries</option></select></label>
             <label class="muted" style="display:flex;gap:6px;align-items:center;font-size:14px">Platform<select id="of-portal" aria-label="Platform"><option value="">All platforms</option></select></label>
             <select id="of-fit" aria-label="Fit"><option value="">Any fit</option><option value="high">High fit</option><option value="medium">Medium fit</option><option value="low">Low fit</option></select>
 <label class="muted" style="display:flex;gap:6px;align-items:center;font-size:14px">Posted<select id="of-posted" aria-label="Posted date"><option value="">any time</option><option value="0">today</option><option value="3">last 3 days</option><option value="7">last 7 days</option><option value="14">last 14 days</option><option value="30">last 30 days</option><option value="old">older than 30 days</option></select></label>
@@ -367,6 +368,7 @@ details summary { cursor: pointer; }
           </div>
           <div class="toolbar">
             <div class="search"><svg class="i"><use href="#i-search"/></svg><input id="sq" type="search" placeholder="Search company, job, email…" aria-label="Search send list"></div>
+            <label class="muted" style="display:flex;gap:6px;align-items:center;font-size:14px">Country<select id="s-country" aria-label="Country"><option value="">All countries</option></select></label>
             <label class="muted" style="display:flex;gap:6px;align-items:center;font-size:14px">Platform<select id="s-portal" aria-label="Platform"><option value="">All platforms</option></select></label>
             <select id="s-email" aria-label="Email"><option value="">All jobs</option><option value="yes" selected>With an email</option><option value="no">No email published</option></select>
 <label class="muted" style="display:flex;gap:6px;align-items:center;font-size:14px">Posted<select id="s-posted" aria-label="Posted date"><option value="">any time</option><option value="0">today</option><option value="3">last 3 days</option><option value="7">last 7 days</option><option value="14">last 14 days</option><option value="30">last 30 days</option><option value="old">older than 30 days</option></select></label>
@@ -452,6 +454,8 @@ details summary { cursor: pointer; }
                   <p class="muted" style="margin:4px 0 8px;font-size:13px">Finds recruiters and hiring managers with verified emails. Get your key at <a href="https://hunter.io/api-keys" target="_blank" rel="noopener noreferrer">hunter.io/api-keys</a> (free plan works). It is stored in your Mac's Keychain.</p>
                   <div class="toolbar" style="margin:0"><input id="hunter-key" type="password" autocomplete="off" placeholder="Paste your Hunter API key" aria-label="Hunter API key" style="flex:1;min-width:0"><button class="btn" id="hunter-save">Connect</button></div></div>
                 <div><b>Gmail drafts</b> <span id="gmail-status" class="muted"></span></div>
+                <div><b>Daily search covers</b>
+                  <div id="regions" class="chips" style="margin-top:6px"></div></div>
               </div>
             </div>
             <div class="panel">
@@ -765,6 +769,19 @@ function render() {
   renderApps(); renderFollowups(); renderOpps(); fillBuilderJobs();
 }
 
+// Country from a job's location text (France unless it names Luxembourg or a Swiss place).
+const SWISS = /suisse|switzerland|schweiz|svizzera|gen[eè]v|geneva|z[uü]rich|lausanne|b[aâ]le|basel|bern|lugano|zoug|\bzug\b|neuch[aâ]tel|fribourg|\bsion\b|winterthur|lucerne|luzern|vaud|valais|tessin/i;
+function countryOf(loc) {
+  const s = String(loc || "");
+  if (/luxembourg|luxemburg/i.test(s)) return "Luxembourg";
+  if (SWISS.test(s)) return "Switzerland";
+  return "France";
+}
+function countryOptions(rows, locOf) {
+  const n = {};
+  for (const r of rows) { const c = countryOf(locOf(r)); n[c] = (n[c] || 0) + 1; }
+  return Object.entries(n).sort((a, b) => b[1] - a[1]).map(([c, k]) => [c, `${c} (${k})`]);
+}
 const sum = (o) => Object.values(o).reduce((s, v) => s + v, 0);
 const pct = (a, b) => b ? `${Math.round((a / b) * 100)}%` : "";
 function pill(s) { return `<span class="pill" style="--pc:${cssVar(`--s-${s}`) || cssVar("--c-unknown")}">${esc(label(s) || "—")}</span>`; }
@@ -846,9 +863,13 @@ function sortHead(key, label) {
 function renderOpps() {
   const q = $("#oq").value.trim().toLowerCase(), fp = $("#of-portal").value, ff = $("#of-fit").value, withCv = $("#of-cv").checked;
   const wp = $("#of-posted").value, wf = $("#of-found").value;
+  const oc = $("#of-country"), ocWant = oc.value || store("tracker.of-country") || "";
+  fillSelect(oc, countryOptions(DATA.opportunities, o => o.location), "All countries");
+  if ([...oc.options].some(x => x.value === ocWant)) oc.value = ocWant;
+  store("tracker.of-country", oc.value);
   store("tracker.of-posted", wp); store("tracker.of-found", wf);
   const rows = DATA.opportunities.filter(o => (!q || [o.title, o.company, o.location].join(" ").toLowerCase().includes(q)) && (!fp || o.portal === fp) && (!ff || o.fit === ff) && (!withCv || o.cv)
-    && inWindow(o.posted_date, wp) && inWindow(o.first_seen, wf));
+    && inWindow(o.posted_date, wp) && inWindow(o.first_seen, wf) && (!oc.value || countryOf(o.location) === oc.value));
   if (OPP_SORT === "posted" || OPP_SORT === "found") {
     const f = OPP_SORT === "posted" ? "posted_date" : "first_seen";
     rows.sort((a, b) => String(b[f] || "").localeCompare(String(a[f] || "")));
@@ -899,7 +920,7 @@ function showTab(name) {
 $("#of-portal").addEventListener("input", () => store("tracker.of-portal", $("#of-portal").value));
 $("#of-posted").value = store("tracker.of-posted") || "";
 $("#of-found").value = store("tracker.of-found") || "";
-["#oq", "#of-portal", "#of-fit", "#of-cv", "#of-posted", "#of-found"].forEach(s => $(s).addEventListener("input", renderOpps));
+["#oq", "#of-portal", "#of-fit", "#of-cv", "#of-posted", "#of-found", "#of-country"].forEach(s => $(s).addEventListener("input", renderOpps));
 $("#opp-table").addEventListener("click", (e) => {
   const b = e.target.closest("button.sort"); if (!b) return;
   e.stopPropagation();
@@ -1487,7 +1508,12 @@ function renderSendList() {
   fillSelect(sp, platformOptions(SEND), "All platforms");
   if ([...sp.options].some(o => o.value === want)) sp.value = want;
   store("tracker.s-portal", sp.value);
-  const rows = SEND.filter(r => (!sp.value || r.portal === sp.value) && inWindow(dates(r)[0], wp) && inWindow(dates(r)[1], wf) &&
+  const scSel = $("#s-country"), scWant = scSel.value || store("tracker.s-country") || "";
+  const locOf = (r) => (byKey[r.key] || {}).location;
+  fillSelect(scSel, countryOptions(SEND, locOf), "All countries");
+  if ([...scSel.options].some(x => x.value === scWant)) scSel.value = scWant;
+  store("tracker.s-country", scSel.value);
+  const rows = SEND.filter(r => (!sp.value || r.portal === sp.value) && (!scSel.value || countryOf(locOf(r)) === scSel.value) && inWindow(dates(r)[0], wp) && inWindow(dates(r)[1], wf) &&
     (!q || [r.company, r.title, (r.contacts || []).map(c => c.email).join(" ")].join(" ").toLowerCase().includes(q)) &&
     (only === "" || (only === "yes") === !!(r.contacts && r.contacts.length)) && (!hideSent || !r.sent));
   const withEmail = SEND.filter(r => r.contacts && r.contacts.length).length;
@@ -1561,7 +1587,7 @@ $("#send-table").addEventListener("input", (e) => {
 });
 $("#s-posted").value = store("tracker.s-posted") || "";
 $("#s-found").value = store("tracker.s-found") || "";
-["#sq", "#s-email", "#s-hide-sent", "#s-posted", "#s-found", "#s-portal"].forEach(s => $(s).addEventListener("input", renderSendList));
+["#sq", "#s-email", "#s-hide-sent", "#s-posted", "#s-found", "#s-portal", "#s-country"].forEach(s => $(s).addEventListener("input", renderSendList));
 
 async function pollBatch() {
   const st = await (await fetch("/api/batch/status")).json();
@@ -1815,6 +1841,9 @@ async function loadSettings() {
   try { s = await (await fetch("/api/settings")).json(); } catch (e) { return; }
   $("#hunter-status").innerHTML = s.hunter ? `<span class="tag ok">${icon("check")} connected</span>` : `<span class="tag">not connected</span>`;
   $("#hunter-key").placeholder = s.hunter ? "Connected - paste a new key to replace it" : "Paste your Hunter API key";
+  const on = new Set(s.regions || ["paris"]);
+  $("#regions").innerHTML = Object.entries(s.region_labels || {}).map(([k, l]) =>
+    `<label class="chip" style="cursor:pointer;display:inline-flex;gap:6px;align-items:center"><input type="checkbox" data-region="${esc(k)}" ${on.has(k) ? "checked" : ""}> ${esc(l)}</label>`).join("");
   $("#gmail-status").innerHTML = s.gmail ? `<span class="tag ok">${icon("check")} ${esc(s.gmail)}</span>`
     : `<span class="tag">not connected</span> <span style="font-size:13px">- run <code>python3 tools/gmail_drafts.py --setup</code> in Terminal (it asks for a Google app password)</span>`;
 }
@@ -1827,7 +1856,12 @@ $("#hunter-save").addEventListener("click", async () => {
     $("#hunter-key").value = "";
     const q = out.quota || {};
     toast(`Hunter connected${q.available != null ? ` - ${q.available - (q.used || 0)} searches left this month` : ""}`);
-    loadSettings();
+    $("#regions").addEventListener("change", async () => {
+  const regions = [...document.querySelectorAll("#regions input:checked")].map(i => i.dataset.region);
+  try { const out = await api("/api/settings/regions", { regions }); toast(`Daily search: ${out.regions.length} region${out.regions.length > 1 ? "s" : ""}`); }
+  catch (err) { toast(err.message); }
+});
+loadSettings();
   } catch (err) { toast(err.message); }
   finally { $("#hunter-save").disabled = false; }
 });

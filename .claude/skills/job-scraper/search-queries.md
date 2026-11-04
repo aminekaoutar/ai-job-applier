@@ -23,6 +23,19 @@ Every `/scrape` run covers these four sites for **Paris / Île-de-France**, in t
 
 Tag every result with its site as the `portal` (`linkedin`, `welcometothejungle`, `indeed`, `hellowork`, `free-work`, `francetravail`) so the tracker dashboard (`python3 tools/tracker_app.py`) can show which sites produce jobs and responses.
 
+## Luxembourg and Switzerland
+
+The tracker's search covers both through Free-Work (`lu~~~`, `ch~~~`) and LinkedIn (`Luxembourg`, `Switzerland`): pick them under "Find jobs for my profile", or tick them in Profile > Connections > Daily search covers. `/scrape` adds the local boards by WebSearch, keeping only postings whose page still opens and tagging `portal` as below:
+
+| Country | Board | Query (WebSearch) | `portal` |
+|---------|-------|-------------------|----------|
+| Luxembourg | jobs.lu | `site:jobs.lu "AI engineer" OR "IA" OR "data scientist"` | `jobs-lu` |
+| Luxembourg | Moovijob | `site:moovijob.com "intelligence artificielle" OR "AI engineer" Luxembourg` | `moovijob` |
+| Switzerland | jobs.ch | `site:jobs.ch "AI engineer" OR "machine learning" OR "LLM"` | `jobs-ch` |
+| Switzerland | jobup.ch (French-speaking) | `site:jobup.ch "ingénieur IA" OR "data scientist" OR "IA générative" Genève OR Lausanne` | `jobup` |
+
+Language: German-speaking Switzerland (Zurich, Basel, Bern, Zug) often requires German, which the profile does not declare - apply the Language Gate; Geneva, Lausanne and Luxembourg usually work in French and/or English.
+
 ## Installed portal CLIs (primary for `/scrape`)
 
 `/scrape` discovers every portal skill under `.agents/skills/*/SKILL.md` and runs its CLI first. For the French market the relevant CLIs are:

@@ -53,6 +53,14 @@ class DailyRun(unittest.TestCase):
         self.assertEqual(daily.latest_report(self.base)["drafts"], 1)
         daily.notify.assert_called_once()
 
+    def test_every_ticked_region_is_searched(self):
+        (daily.daily_dir(self.base) / "regions.json").write_text(json.dumps({"regions": ["paris", "luxembourg", "switzerland", "mars"]}))
+        with mock.patch.object(daily.batch, "prepare_all", return_value={}):
+            report = daily.run(self.base, self.seen, self.tracker)
+        regions = [c.args[3] for c in daily.job_finder.profile_search.call_args_list]
+        self.assertEqual(regions, ["paris", "luxembourg", "switzerland"])  # unknown "mars" ignored
+        self.assertEqual(report["new_jobs"], 3 * FOUND["added"])
+
     def test_dry_run_prepares_nothing(self):
         with mock.patch.object(daily.batch, "prepare_all") as prep:
             report = daily.run(self.base, self.seen, self.tracker, dry_run=True)
