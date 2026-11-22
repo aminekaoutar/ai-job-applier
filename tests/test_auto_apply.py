@@ -83,7 +83,7 @@ class BrowserFill(unittest.TestCase):
         page.set_content(FORM)
         seen = {}
 
-        def fake_claude(fields, profile, job, standing=None):
+        def fake_claude(fields, profile, job, standing=None, context=None):
             seen.update({f["label"]: f for f in fields})
             by = {f["label"]: f["id"] for f in fields}
             return ({by["Niveau d'anglais"]: "Courant"},
@@ -119,7 +119,7 @@ class BrowserFill(unittest.TestCase):
             "document.title='SUBMITTED';return false",
             "document.title='SUBMITTED';document.body.innerHTML='<h1>Merci pour votre candidature !</h1>';return false"))
 
-        def fake_claude(fields, profile, job, standing=None):
+        def fake_claude(fields, profile, job, standing=None, context=None):
             self.assertEqual(standing.get("needs_sponsorship"), "no")
             by = {f["label"]: f["id"] for f in fields}
             return ({by["Niveau d'anglais"]: "Courant", by["Avez-vous besoin d'un visa ? *"]: "Non",

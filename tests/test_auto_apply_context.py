@@ -1,0 +1,184 @@
+"""tools/auto_apply.py: posting language, a CV in that language, the answer context,
+LinkedIn skipped, CAPTCHA stops the run."""
+
+import io
+import json
+import sys
+import tempfile
+import unittest
+from contextlib import redirect_stdout
+from pathlib import Path
+from unittest import mock
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
+import auto_apply as aa  # noqa: E402
+import profile_store as ps  # noqa: E402
+
+EN_POSTING = ("We are looking for a Data Engineer to join our team. You will build pipelines with Airflow "
+              "and Spark, and you will work with our data scientists on the platform.")
+FR_POSTING = ("Nous recherchons un Data Engineer pour notre équipe. Vous serez en charge des pipelines "
+              "de données avec Airflow et Spark, dans une équipe pour la plateforme.")
+
+FR_PROFILE = {
+    "basics": {"name": "Test Candidate", "email": "t@example.com", "headline": "Ingénieur données",
+               "summary": "Ingénieur données avec une expérience dans les pipelines pour la production.",
+               "github": ""},
+    "experience": [{"title": "Ingénieur données", "company": "Acme", "start": "2023-01", "end": "",
+                    "bullets": ["Développé des pipelines de données avec Airflow pour la plateforme et les équipes"],
+                    "skills": ["Airflow", "Python"]}],
+    "skills": ["Python", "Airflow", "Spark"],
+}
+
+
+def make_profile_dir(d: str) -> Path:
+    base = Path(d)
+    (base / "tailored").mkdir()
+    (base / "outreach").mkdir()
+    ps.save_profile(FR_PROFILE, base)
+    return base
+
+
+class PostingLanguage(unittest.TestCase):
+    def test_language_follows_the_posting(self):
+        self.assertEqual(aa.posting_language(EN_POSTING), "English")
+        self.assertEqual(aa.posting_language(FR_POSTING), "French")
+        self.assertEqual(aa.posting_language(""), "French")  # French market default
+
+    def test_cv_matches_language(self):
+        self.assertTrue(aa.cv_matches_language({"language": "English", "polished": True}, "English", "French"))
+        # Headings in English but bullets still the French profile's: not an English CV.
+        self.assertFalse(aa.cv_matches_language({"language": "English", "polished": False}, "English", "French"))
+        self.assertTrue(aa.cv_matches_language({"language": "French", "polished": False}, "French", "French"))
+        self.assertFalse(aa.cv_matches_language({"language": "French", "polished": True}, "English", "French"))
+
+
+class LanguageCV(unittest.TestCase):
+    def test_reuses_the_trackers_cv_when_already_in_the_language(self):
+        with tempfile.TemporaryDirectory() as d:
+            base = make_profile_dir(d)
+            cv = ps.save_tailored({**ps.tailor(ps.load_profile(base), FR_POSTING, "Data Engineer", "Acme"),
+                                   "id": "fr-cv"}, base)
+            (base / "tailored" / "fr-cv.pdf").write_bytes(b"%PDF-1.4\n")
+            with mock.patch.object(ps, "polish") as polish:
+                pdf, got, note = aa.language_cv({"cv_id": "fr-cv"}, base, FR_POSTING, "French")
+            polish.assert_not_called()
+            self.assertEqual(pdf, (base / "tailored" / "fr-cv.pdf").resolve())
+            self.assertEqual(got["id"], cv["id"])
+
+    def test_english_posting_gets_a_new_english_cv(self):
+        with tempfile.TemporaryDirectory() as d:
+            base = make_profile_dir(d)
+            # The tracker prepared an unpolished CV: English headings, French bullets.
+            ps.save_tailored({**ps.tailor(ps.load_profile(base), EN_POSTING, "Data Engineer", "Acme"), "id": "mixed"}, base)
+            (base / "tailored" / "mixed.pdf").write_bytes(b"%PDF-1.4\n")
+            rec_path = base / "outreach" / "acme.json"
+            rec_path.write_text(json.dumps({"cv_id": "mixed", "pdf": "tailored/mixed.pdf"}), encoding="utf-8")
+
+            def fake_polish(cv, profile, max_bullets=4):
+                self.assertEqual(cv["language"], "English")
+                cv = json.loads(json.dumps(cv))
+                cv["experience"][0]["bullets"] = ["Built Airflow data pipelines for the platform"]
+                cv["polished"] = True
+                return cv
+
+            def fake_render(cv, base_dir):
+                out = base_dir / "tailored" / f"{cv['id']}.pdf"
+                out.write_bytes(b"%PDF-1.4\n")
+                return out
+
+            import batch
+            job = {"cv_id": "mixed", "_path": str(rec_path), "title": "Data Engineer", "company": "Acme", "key": "k1"}
+            with mock.patch.object(ps, "polish", side_effect=fake_polish), \
+                    mock.patch.object(batch, "render_pdf", side_effect=fake_render):
+                pdf, cv, note = aa.language_cv(job, base, EN_POSTING, "English")
+            self.assertEqual(cv["language"], "English")
+            self.assertTrue(cv["polished"])
+            self.assertEqual(cv["experience"][0]["bullets"], ["Built Airflow data pipelines for the platform"])
+            self.assertTrue(pdf.is_file())
+            self.assertNotEqual(cv["id"], "mixed")
+            rec = json.loads(rec_path.read_text(encoding="utf-8"))
+            self.assertEqual(rec["cv_id"], cv["id"])  # the Send list now points at the English CV
+            self.assertIn("English", note)
+
+    def test_no_cv_rather_than_a_wrong_language_cv(self):
+        with tempfile.TemporaryDirectory() as d:
+            base = make_profile_dir(d)
+            with mock.patch.object(ps, "polish", side_effect=ps.ClaudeError("offline")):
+                pdf, cv, note = aa.language_cv({"title": "Data Engineer", "company": "Acme"}, base, EN_POSTING, "English")
+            self.assertIsNone(pdf)
+            self.assertIn("English", note)
+
+
+class AnswerContext(unittest.TestCase):
+    def test_prompt_carries_language_posting_github_and_residence_facts(self):
+        seen = {}
+
+        def fake_run(prompt, schema, timeout=300, task="claude"):
+            seen.update(prompt=prompt, task=task)
+            return {"answers": [{"id": "f1", "value": "Oui"}], "unanswered": []}
+
+        standing = {"nationality": "Moroccan", "residence_permit": "Carte de séjour pluriannuelle",
+                    "work_authorization": "Authorised to work in France", "auto_submit": True}
+        context = {"language": "English", "posting": EN_POSTING, "cv": {"summary": "Data engineer"},
+                   "github": [{"name": "Airflow ETL", "skills": ["Airflow", "dbt"]}]}
+        with mock.patch.object(aa.ps, "run_claude", side_effect=fake_run):
+            answers, missing = aa.claude_answers([{"id": "f1", "kind": "radio", "label": "Work permit?",
+                                                   "options": ["Oui", "Non"]}], FR_PROFILE, {"company": "Acme"},
+                                                 standing, context)
+        self.assertEqual(answers, {"f1": "Oui"})
+        self.assertEqual(seen["task"], "form_answers")
+        p = seen["prompt"]
+        self.assertIn("in English - the language of the job posting", p)
+        self.assertIn("Airflow ETL", p)
+        self.assertIn("Moroccan", p)
+        self.assertIn("Carte de séjour pluriannuelle", p)
+        self.assertIn("pipelines with Airflow", p)
+        self.assertNotIn("auto_submit", p.split("<standing_answers>")[1])  # only answer keys reach Claude
+
+    def test_new_answer_keys_exist(self):
+        for key in ("nationality", "residence_permit", "permit_valid_until", "work_authorization", "needs_sponsorship"):
+            self.assertIn(key, aa.ANSWER_KEYS)
+
+
+class Scope(unittest.TestCase):
+    def test_linkedin_offers_are_skipped_without_a_browser(self):
+        try:
+            import playwright  # noqa: F401
+        except ImportError:
+            self.skipTest("playwright not installed")
+        with tempfile.TemporaryDirectory() as d:
+            base = make_profile_dir(d)
+            buf = io.StringIO()
+            with redirect_stdout(buf), mock.patch.object(aa, "open_browser") as browser:
+                rc = aa.main(["https://fr.linkedin.com/jobs/view/4471708493/", "--profile-dir", str(base)])
+            browser.assert_not_called()
+            self.assertEqual(rc, 2)
+            result = json.loads(buf.getvalue().split("RESULT ", 1)[1].splitlines()[0])
+            self.assertEqual(result["status"], "skipped_linkedin")
+
+    def test_linkedin_not_in_login_sites(self):
+        self.assertFalse(any("linkedin" in u for u in aa.LOGIN_SITES))
+
+
+class Captcha(unittest.TestCase):
+    def frame(self, url, visible=True):
+        f = mock.MagicMock()
+        f.url = url
+        f.frame_element.return_value.is_visible.return_value = visible
+        return f
+
+    def test_visible_challenge_is_detected(self):
+        page = mock.MagicMock()
+        page.frames = [self.frame("about:blank"),
+                       self.frame("https://www.google.com/recaptcha/api2/anchor?k=x")]
+        self.assertTrue(aa.has_captcha(page))
+
+    def test_hidden_or_absent_challenge_is_ignored(self):
+        page = mock.MagicMock()
+        page.frames = [self.frame("https://www.google.com/recaptcha/api2/anchor?k=x", visible=False),
+                       self.frame("https://jobs.example.com/apply")]
+        self.assertFalse(aa.has_captcha(page))
+
+
+if __name__ == "__main__":
+    unittest.main()
