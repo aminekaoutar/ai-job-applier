@@ -73,6 +73,7 @@ APPLY_TEXT = re.compile(
 EASY_APPLY = re.compile(r"easy apply|candidature simplifiée|einfach bewerben", re.I)
 SUBMIT_TEXT = re.compile(
     r"^\s*(envoyer( ma| la)?( candidature)?|soumettre( ma candidature)?|postuler|je postule|"
+    r"(continuer|poursuivre|finaliser|terminer) ma candidature|"
     r"valider( ma candidature)?|confirmer( ma candidature)?|submit( (my )?application)?|"
     r"send( (my )?application)?|apply|apply now|bewerbung (absenden|senden)|absenden)\s*$", re.I)
 NEXT_TEXT = re.compile(r"^\s*(suivant|continuer|étape suivante|next|continue|weiter)\s*>?\s*$", re.I)
@@ -84,6 +85,11 @@ EXPIRED_TEXT = re.compile(
     r"(n'est plus disponible|n’est plus disponible|offre (a expiré|expirée|pourvue|n'existe plus)|"
     r"n.accepte plus de candidatures|no longer accepting applications|this job (is )?no longer available|"
     r"job (has )?expired|position has been filled)", re.I)
+# The site emailed a one-time code to verify the candidate (HelloWork, logged out). Never read or
+# guessed: a one-time login in the tool's browser makes the step go away.
+EMAIL_CODE = re.compile(
+    r"(saisissez le code (envoyé|reçu)|entrez le code reçu|code (de vérification|de validation) envoyé|"
+    r"enter the (verification )?code (we )?sent|we('ve| have) sent (you )?a (verification )?code)", re.I)
 # Free-Work and others redirect a closed offer to their job search with ?expire=1.
 EXPIRED_URL = re.compile(r"[?&]expired?=(1|true)\b", re.I)
 # The site refused the automated browser (CDN / WAF error page). Never worked around.
@@ -132,7 +138,16 @@ EXTRACT_JS = r"""
     return (t || el.placeholder || el.name || el.id || '').slice(0, 200);
   };
   const groups = {};
+  // Only the application form: when a form / dialog with 3+ real fields exists, fields outside it
+  // (job-page skill chips like HelloWork's "add this skill to your profile", filters) are ignored.
+  const realField = e => { const t = (e.getAttribute('type') || e.tagName).toLowerCase();
+    return !['hidden', 'submit', 'button', 'search', 'checkbox', 'radio', 'reset', 'image'].includes(t)
+      && (t === 'file' || vis(e)); };
+  const roots = [...document.querySelectorAll('form, [role=dialog], dialog')]
+    .filter(r => [...r.querySelectorAll('input, select, textarea')].filter(realField).length >= 3);
+  const inRoot = el => !roots.length || roots.some(r => r.contains(el));
   for (const el of document.querySelectorAll('input, select, textarea')) {
+    if (!inRoot(el)) continue;
     const type = (el.getAttribute('type') || el.tagName).toLowerCase();
     if (['hidden', 'submit', 'button', 'reset', 'image', 'search'].includes(type)) continue;
     if (type !== 'file' && !vis(el)) continue;
@@ -783,11 +798,13 @@ def fill_page(page, profile: dict, job: dict, cv: Path | None, done: set, dry: b
         more, miss = claude_answers(ask, profile, job, standing, context)
         answers.update(more)
         missing.update(miss)
-    report = {"filled": [], "missing": []}
+    report = {"filled": [], "missing": [], "cv_attached": False}
     for frame, f in todo:
         done.add(f["id"])
         if f["id"] in answers and fill_one(frame, f, answers[f["id"]], cv):
             report["filled"].append(f["label"] or f["kind"])
+            if f["kind"] == "file" and cv is not None and answers[f["id"]] == str(cv):
+                report["cv_attached"] = True
             frame.evaluate(MARK_JS, [f["id"], "#16a34a"])
         elif f["id"] in missing or f.get("required"):
             report["missing"].append((f["label"] or f["kind"], f.get("required", False), missing.get(f["id"], "")))
@@ -836,8 +853,9 @@ def page_state(page) -> str | None:
     return None
 
 
-def form_buttons(page, pattern: re.Pattern) -> list:
-    """Visible, enabled buttons matching pattern; ones inside a form or dialog first."""
+def form_buttons(page, pattern: re.Pattern, only_form: bool = False) -> list:
+    """Visible, enabled buttons matching pattern; ones inside a form or dialog first.
+    only_form: nothing outside a form / dialog (a page's header 'Postuler' is never a submit)."""
     found = []
     for frame in page.frames:
         for role in ("button", "link"):
@@ -851,48 +869,83 @@ def form_buttons(page, pattern: re.Pattern) -> list:
                 try:
                     if not el.is_visible() or el.is_disabled():
                         continue
-                    in_form = el.evaluate(
-                        "e => !!e.closest('form, [role=dialog], dialog, [class*=modal], [class*=apply], [id*=apply]')")
+                    strict, in_form = el.evaluate(
+                        # e.form: a submit button outside the <form> but tied to it with form="..."
+                        "e => [!!(e.form || e.closest('form, [role=dialog], dialog')), "
+                        "!!(e.form || e.closest('form, [role=dialog], dialog, [class*=modal], [class*=apply], [id*=apply]'))]")
                 except Exception:  # noqa: BLE001
+                    continue
+                if only_form and not strict:
                     continue
                 found.append((in_form, role == "button", el))
     found.sort(key=lambda t: (t[0], t[1]), reverse=True)
     return [el for *_, el in found]
 
 
-def has_required_empty(page) -> bool:
-    js = """() => [...document.querySelectorAll('input[required], select[required], textarea[required], [aria-invalid=true]')]
+def has_required_empty(page, cv_attached: bool = False) -> bool:
+    """A visible required field still empty. With cv_attached, empty file inputs are ignored: sites
+    like HelloWork swap the upload box for a 'use another CV' box once the CV is in. Other required
+    uploads (a cover letter) are already caught by the fill report."""
+    js = """(skipFiles) => [...document.querySelectorAll('input[required], select[required], textarea[required], [aria-invalid=true]')]
       .some(e => { const r = e.getBoundingClientRect(); if (!r.width || !r.height) return false;
+        if (e.type === 'file' && skipFiles) return false;
         if (e.getAttribute('aria-invalid') === 'true') return true;
         if (e.type === 'checkbox') return !e.checked;
         if (e.type === 'radio') return !document.querySelector(`input[name="${CSS.escape(e.name)}"]:checked`);
+        if (e.type === 'file') return !(e.files && e.files.length);
         return !e.value; })"""
     for frame in page.frames:
         try:
-            if frame.evaluate(js):
+            if frame.evaluate(js, cv_attached):
                 return True
         except Exception:  # noqa: BLE001
             continue
     return False
 
 
-def try_submit(page) -> str:
-    """Click Submit (or Next on a multi-page form). submitted / submitted_unconfirmed / next_page / needs_you."""
-    sub = form_buttons(page, SUBMIT_TEXT)
+def submit_step(page, cv_attached: bool = False):
+    """Click the form's own Submit (or Next). Returns (outcome, page):
+    submitted / submitted_unconfirmed / next_page / needs_you, or handoff when the click opened the
+    recruiter's site (new tab or another host) - e.g. HelloWork's "Continuer ma candidature"."""
+    ctx = page.context
+    try:  # let an attached CV finish uploading before the click
+        page.wait_for_load_state("networkidle", timeout=15000)
+    except Exception:  # noqa: BLE001 - pages that poll forever never go idle
+        pass
+    before = len(ctx.pages)
+    host = urlsplit(page.url).hostname or ""
+    sub = form_buttons(page, SUBMIT_TEXT, only_form=True)
     if sub:
         sub[0].click(timeout=5000)
-        page.wait_for_timeout(4500)
-        if DONE_TEXT.search(page_text(page)[:30000]):
-            return "submitted"
-        if has_required_empty(page):
-            return "needs_you"
-        return "submitted_unconfirmed"
-    nxt = form_buttons(page, NEXT_TEXT)
+        for _ in range(6):  # confirmations often come after an upload / redirect: up to ~15 s
+            page.wait_for_timeout(2500)
+            if len(ctx.pages) > before:
+                new = ctx.pages[-1]
+                settle(new)
+                return "handoff", new
+            if (urlsplit(page.url).hostname or "") != host:
+                settle(page)
+                return "handoff", page
+            text = page_text(page)[:30000]
+            if DONE_TEXT.search(text):
+                return "submitted", page
+            if EMAIL_CODE.search(text):
+                return "email_code", page
+        if has_required_empty(page, cv_attached):
+            return "needs_you", page
+        return "submitted_unconfirmed", page
+    nxt = form_buttons(page, NEXT_TEXT, only_form=True)
     if nxt:
         nxt[0].click(timeout=5000)
         page.wait_for_timeout(2500)
-        return "next_page"
-    return "needs_you"
+        return "next_page", page
+    return "needs_you", page
+
+
+def try_submit(page, cv_attached: bool = False) -> str:
+    """submit_step's outcome only (a handoff counts as next_page)."""
+    outcome, _ = submit_step(page, cv_attached)
+    return {"handoff": "next_page", "email_code": "needs_you"}.get(outcome, outcome)
 
 
 def open_browser(pw, browser_dir: Path, headless: bool):
@@ -1010,6 +1063,17 @@ def main(argv=None) -> int:
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
 
         def finish(status: str, close: bool, **extra) -> int:
+            if status in {"submitted", "submitted_unconfirmed", "needs_you"}:
+                try:  # proof of what the page showed at the end, kept with the application log
+                    shots = args.profile_dir / "auto_apply" / "shots"
+                    shots.mkdir(parents=True, exist_ok=True)
+                    name = re.sub(r"[^a-z0-9_-]", "-", (base.get("key") or "job").lower())[:80]
+                    shot = shots / f"{date.today().isoformat()}-{name}-{status}.png"
+                    page.screenshot(path=str(shot), full_page=True)
+                    extra["screenshot"] = str(shot)
+                    extra["page_says"] = re.sub(r"\s+", " ", page_text(page))[:400]
+                except Exception:  # noqa: BLE001
+                    pass
             out = {"status": status, **base, **extra}
             print("RESULT " + json.dumps(out, ensure_ascii=False))
             log(args.profile_dir, {"date": str(date.today()), **out})
@@ -1069,7 +1133,7 @@ def main(argv=None) -> int:
                           why="no application form found (login wall, email-only offer, or unusual site)")
 
         done: set = set()
-        filled, left, required_left = 0, [], 0
+        filled, left, required_left, cv_attached = 0, [], 0, False
         for _step in range(8):
             rep = fill_page(page, profile, job, cv, done, args.dry_run, standing, context)
             if args.dry_run:
@@ -1092,15 +1156,36 @@ def main(argv=None) -> int:
                     if cmd != "q" and not page.is_closed():
                         continue
                 return finish("filled", False, form=page.url, filled=filled, required_left=required_left, left=left)
-            if req or has_required_empty(page):
+            cv_attached = cv_attached or rep.get("cv_attached", False)
+            if req or has_required_empty(page, cv_attached):
                 return finish("needs_you", False, form=page.url, filled=filled,
                               required_left=max(required_left, 1), left=left)
             if has_captcha(page):
                 return finish("needs_you", False, form=page.url, filled=filled,
                               left=left + ["CAPTCHA - solve it in Chrome, then click Submit"],
                               why="the site asks for a human check")
-            outcome = try_submit(page)
+            outcome, page = submit_step(page, cv_attached)
             if outcome == "next_page":
+                continue
+            if outcome == "email_code":
+                return finish("login_needed", False, form=page.url, filled=filled,
+                              left=left + ["enter the code the site emailed you, or log in to this site once"],
+                              why="the site emailed a verification code - log in once with 'Log in to job "
+                                  "sites' and it will not ask again; not sent yet")
+            if outcome == "handoff":
+                # e.g. HelloWork created the account and sends the candidate to the recruiter's site:
+                # the application itself happens there, so fill that page too (fresh field ids).
+                print(f"Handed over to the recruiter's site: {page.url}")
+                state = page_state(page)
+                if state in {"expired", "blocked"}:
+                    return finish(state, True, form=page.url, filled=filled, left=left,
+                                  why=f"recruiter's site: {state}")
+                if LOGIN_URL.search(urlsplit(page.url).path) or not (has_form(page) and wait_for_fields(page)):
+                    return finish("needs_you", False, form=page.url, filled=filled,
+                                  left=left + ["finish the application on the recruiter's site"],
+                                  why="handed over to the recruiter's site, which shows no form to fill "
+                                      "(login, email-only or unusual page)")
+                done, cv_attached = set(), False
                 continue
             return finish(outcome, outcome == "submitted", form=page.url, filled=filled, left=left)
         return finish("needs_you", False, form=page.url, filled=filled, left=left, why="more than 8 form pages")

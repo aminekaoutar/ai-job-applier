@@ -222,6 +222,69 @@ class PageStates(unittest.TestCase):
         self.assertEqual(aa.page_state(page), "blocked")
         page.close()
 
+    def test_spare_upload_box_after_cv_attached_does_not_block(self):
+        # HelloWork: once the CV is in, a required "Utiliser un autre CV" file box appears, empty.
+        page = self.browser.new_page()
+        page.set_content("""<form><label>Prénom <input name=fn required value="Amine"></label>
+            <p>cv.pdf ajouté</p><label>Utiliser un autre CV <input type=file name=upload required></label>
+            <label><input type=checkbox name=cgu required checked> J'accepte</label></form>""")
+        self.assertTrue(aa.has_required_empty(page))            # no CV attached by us: still blocks
+        self.assertFalse(aa.has_required_empty(page, cv_attached=True))
+        page.set_content("<form><input name=fn required></form>")
+        self.assertTrue(aa.has_required_empty(page, cv_attached=True))  # other empty fields still block
+        page.close()
+
+    HELLOWORK_LIKE = """<header><button onclick="document.title='HEADER'">Postuler</button></header>
+        <section><p>Vous avez ces compétences ?</p>
+          <label><input type=checkbox name=skill1> Création d'une base documentaire</label>
+          <label><input type=checkbox name=skill2> Python</label></section>
+        <form onsubmit="document.title='SENT';return false">
+          <label>Prénom <input name=fn required></label><label>Nom <input name=ln required></label>
+          <label>Email <input type=email name=em required></label>
+          <label><input type=checkbox name=cgu required> J'accepte de créer un compte</label>
+          <button type=submit>Continuer ma candidature</button></form>"""
+
+    def test_job_page_chips_are_not_form_fields(self):
+        page = self.browser.new_page()
+        page.set_content(self.HELLOWORK_LIKE)
+        labels = [f["label"] for _, f in aa.collect(page)]
+        self.assertIn("Prénom", labels)
+        self.assertFalse(any("base documentaire" in l or l.strip() == "Python" for l in labels), labels)
+        page.close()
+
+    def test_only_the_forms_own_button_is_clicked(self):
+        page = self.browser.new_page()
+        page.set_content(self.HELLOWORK_LIKE)
+        for sel, v in (("input[name=fn]", "Amine"), ("input[name=ln]", "Kaoutar"), ("input[name=em]", "a@b.co")):
+            page.fill(sel, v)
+        page.check("input[name=cgu]")
+        outcome, _ = aa.submit_step(page)
+        self.assertEqual(page.title(), "SENT")  # "Continuer ma candidature" inside the form, not the header
+        self.assertIn(outcome, {"submitted_unconfirmed", "submitted"})
+        page.close()
+
+    def test_emailed_code_step_is_reported_not_claimed_as_sent(self):
+        page = self.browser.new_page()
+        page.set_content("""<form id=s onsubmit="document.body.innerHTML='<p>Entrez le code reçu</p><p>Pour continuer, saisissez le code envoyé à a@b.co.</p><input name=code>';return false">
+            <label>Prénom <input name=fn value=A></label><label>Nom <input name=ln value=B></label>
+            <label>Email <input type=email name=em value=a@b.co></label>
+            <button type=submit>Continuer ma candidature</button></form>""")
+        outcome, _ = aa.submit_step(page)
+        self.assertEqual(outcome, "email_code")
+        page.close()
+
+    def test_submit_button_tied_to_the_form_by_attribute(self):
+        # HelloWork: <button type=submit form="offer-detail-main-step-form"> sits outside the <form>.
+        page = self.browser.new_page()
+        page.set_content("""<header><button onclick="document.title='HEADER'">Postuler</button></header>
+            <form id=step onsubmit="document.title='SENT';return false">
+              <label>Prénom <input name=fn value=A></label><label>Nom <input name=ln value=B></label>
+              <label>Email <input type=email name=em value=a@b.co></label></form>
+            <div><button type=submit form=step>Continuer ma candidature</button></div>""")
+        aa.submit_step(page)
+        self.assertEqual(page.title(), "SENT")
+        page.close()
+
     def test_waits_for_a_form_that_renders_late(self):
         page = self.browser.new_page()
         page.set_content("""<div id=m></div><script>setTimeout(() => { document.getElementById('m').innerHTML =
