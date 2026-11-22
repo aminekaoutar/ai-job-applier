@@ -942,6 +942,33 @@ def submit_step(page, cv_attached: bool = False):
     return "needs_you", page
 
 
+def wait_for_code(page, timeout_s: int = 300):
+    """Visible Chrome only: the candidate types the code the site emailed them; the run waits until
+    the code step is gone. Returns ('submitted' | 'handoff' | 'continue', page), or (None, page) on
+    timeout. The code is never read or typed by the tool."""
+    ctx = page.context
+    before = len(ctx.pages)
+    host = urlsplit(page.url).hostname or ""
+    for _ in range(timeout_s // 3):
+        try:
+            page.wait_for_timeout(3000)
+            if len(ctx.pages) > before:
+                new = ctx.pages[-1]
+                settle(new)
+                return "handoff", new
+            if (urlsplit(page.url).hostname or "") != host:
+                settle(page)
+                return "handoff", page
+            text = page_text(page)[:30000]
+        except Exception:  # noqa: BLE001 - window closed by the candidate
+            return None, page
+        if DONE_TEXT.search(text):
+            return "submitted", page
+        if not EMAIL_CODE.search(text):
+            return "continue", page
+    return None, page
+
+
 def try_submit(page, cv_attached: bool = False) -> str:
     """submit_step's outcome only (a handoff counts as next_page)."""
     outcome, _ = submit_step(page, cv_attached)
@@ -1167,6 +1194,29 @@ def main(argv=None) -> int:
             outcome, page = submit_step(page, cv_attached)
             if outcome == "next_page":
                 continue
+            if outcome == "email_code" and not args.headless:
+                print("WAITING FOR YOU: the site emailed you a code - type it in the Chrome window (5 min).")
+                try:
+                    page.evaluate(BANNER_JS, "Type the code you received by email - auto-apply continues by itself.")
+                except Exception:  # noqa: BLE001
+                    pass
+                outcome, page = wait_for_code(page)
+                if outcome == "submitted":
+                    return finish("submitted", True, form=page.url, filled=filled, left=left)
+                if outcome == "continue":
+                    try:
+                        page.wait_for_load_state("networkidle", timeout=15000)
+                    except Exception:  # noqa: BLE001
+                        pass
+                    if (pages := page.context.pages) and pages[-1] is not page:
+                        page, outcome = pages[-1], "handoff"
+                    elif (urlsplit(page.url).hostname or "") != urlsplit(args.url).hostname:
+                        outcome = "handoff"
+                    else:
+                        done, cv_attached = set(), False
+                        continue
+                if outcome is None:
+                    outcome = "email_code"
             if outcome == "email_code":
                 return finish("login_needed", False, form=page.url, filled=filled,
                               left=left + ["enter the code the site emailed you, or log in to this site once"],

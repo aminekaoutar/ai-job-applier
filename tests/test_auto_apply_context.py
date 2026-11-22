@@ -273,6 +273,16 @@ class PageStates(unittest.TestCase):
         self.assertEqual(outcome, "email_code")
         page.close()
 
+    def test_waits_while_the_candidate_types_the_code(self):
+        page = self.browser.new_page()
+        page.set_content("""<p id=t>Saisissez le code envoyé à a@b.co</p>
+            <script>setTimeout(() => { document.getElementById('t').innerText = 'Merci pour votre candidature !'; }, 2000)</script>""")
+        outcome, _ = aa.wait_for_code(page, timeout_s=12)
+        self.assertEqual(outcome, "submitted")
+        page.set_content("<p>Saisissez le code envoyé à a@b.co</p>")
+        self.assertEqual(aa.wait_for_code(page, timeout_s=3)[0], None)  # nobody typed it: timeout, not sent
+        page.close()
+
     def test_submit_button_tied_to_the_form_by_attribute(self):
         # HelloWork: <button type=submit form="offer-detail-main-step-form"> sits outside the <form>.
         page = self.browser.new_page()
