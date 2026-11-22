@@ -285,7 +285,7 @@ def draft_email(profile: dict, opp: dict, posting: str, contact: str = "", cv: d
             out = ps.run_claude(DRAFT_PROMPT.format(
                 language=language, greeting=greeting,
                 candidate=json.dumps(_candidate_facts(profile, cv), ensure_ascii=False),
-                posting=f"{opp.get('title')} - {opp.get('company')}\n{posting[:12000]}"), DRAFT_SCHEMA)
+                posting=f"{opp.get('title')} - {opp.get('company')}\n{posting[:12000]}"), DRAFT_SCHEMA, task="outreach_email")
             if out.get("subject") and out.get("body"):
                 return {"subject": out["subject"].strip(), "body": out["body"].strip(), "to": contact, "method": "claude"}
         except ps.ClaudeError:

@@ -300,7 +300,7 @@ def to_projects(repos: list[dict], use_claude: bool, language: str = "French") -
         payload = [{"repo": r["repo"], "description": r["description"], "languages": r["languages"],
                     "topics": r["topics"], "readme": r["readme"][:3000]} for r in repos]
         try:
-            out = ps.run_claude(SUMMARY_PROMPT.format(language=language, repos=json.dumps(payload, ensure_ascii=False)), SUMMARY_SCHEMA)
+            out = ps.run_claude(SUMMARY_PROMPT.format(language=language, repos=json.dumps(payload, ensure_ascii=False)), SUMMARY_SCHEMA, task="github_projects")
             summaries = {p.get("repo"): p for p in out.get("projects", []) if isinstance(p, dict)}
         except ps.ClaudeError as exc:
             warnings.append(f"Claude summary failed ({exc}); used each repo's description instead.")

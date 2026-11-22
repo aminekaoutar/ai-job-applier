@@ -262,6 +262,18 @@ If you have salary data (from a union, salary survey, Glassdoor, or personal res
 
 This creates `salary_data.json` which the `/apply` workflow uses for salary benchmarking. If you skip this step, salary lookup is simply omitted.
 
+### Optional: Trace the AI steps in LangSmith
+
+Every AI step in the tracker app and the daily run (CV import, tailored CV, GitHub project bullets, recruiter email drafts) goes through `run_claude()` in `tools/profile_store.py`. With LangSmith tracing on, each call shows up as an `llm` run named `cv_import`, `cv_tailor`, `github_projects` or `outreach_email`, with the prompt, Claude's output, token usage and cost.
+
+```bash
+pip install langsmith
+python3 tools/ls_tracing.py setup    # stores the API key in the macOS Keychain, never in the repo
+python3 tools/ls_tracing.py status   # prints tracing: ON / off
+```
+
+Runs go to the `ai-job-applier` project (override with `LANGSMITH_PROJECT`). `LANGSMITH_API_KEY` in the environment takes precedence over the Keychain, and `LANGSMITH_TRACING=false` turns tracing off. Without the package or a key, nothing is sent. Traces contain your CV and profile data, so only enable this on a LangSmith account you control.
+
 ## 6. Test the workflow
 
 Find a job posting you're interested in, then:

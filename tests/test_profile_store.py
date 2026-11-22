@@ -122,7 +122,9 @@ class Import(unittest.TestCase):
 class RunClaude(unittest.TestCase):
     def run_with(self, stdout, rc=0):
         done = subprocess.CompletedProcess([], rc, stdout=stdout, stderr="")
-        with mock.patch.object(ps, "claude_path", return_value="/bin/claude"), mock.patch.object(ps.subprocess, "run", return_value=done) as run:
+        with mock.patch.object(ps.ls_tracing, "_client", return_value=None), \
+                mock.patch.object(ps, "claude_path", return_value="/bin/claude"), \
+                mock.patch.object(ps.subprocess, "run", return_value=done) as run:
             return ps.run_claude("prompt", {"type": "object"}), run
 
     def test_event_list_output(self):

@@ -28,6 +28,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import unicodedata
 import uuid
@@ -36,6 +37,9 @@ from datetime import date, datetime
 from html import escape
 from pathlib import Path
 from xml.etree import ElementTree
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import ls_tracing  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 PROFILE_DIR = ROOT / "profile"
@@ -639,8 +643,26 @@ class ClaudeError(RuntimeError):
     pass
 
 
-def run_claude(prompt: str, schema: dict, timeout: int = 300) -> dict:
-    """One print-mode call with no tools, no MCP, no saved session; returns the structured output."""
+def run_claude(prompt: str, schema: dict, timeout: int = 300, task: str = "claude") -> dict:
+    """One print-mode call with no tools, no MCP, no saved session; returns the structured output.
+
+    `task` names the call in LangSmith when tracing is on (see tools/ls_tracing.py)."""
+    out = ls_tracing.trace_llm(task, _claude_call, prompt, schema, timeout)
+    data = out.get("structured_output") if isinstance(out, dict) else None
+    if data is None and isinstance(out, dict) and isinstance(out.get("result"), str):
+        m = re.search(r"\{.*\}", out["result"], re.S)
+        if m:
+            try:
+                data = json.loads(m.group(0))
+            except json.JSONDecodeError:
+                data = None
+    if not isinstance(data, dict):
+        raise ClaudeError("claude returned no structured data")
+    return data
+
+
+def _claude_call(prompt: str, schema: dict, timeout: int) -> dict:
+    """Run the claude CLI once and return its final result event (the unit traced in LangSmith)."""
     exe = claude_path()
     if not exe:
         raise ClaudeError("the claude CLI is not installed")
@@ -662,17 +684,7 @@ def run_claude(prompt: str, schema: dict, timeout: int = 300) -> dict:
         out = next((e for e in reversed(out) if isinstance(e, dict) and e.get("type") == "result"), {})
     if isinstance(out, dict) and out.get("is_error"):
         raise ClaudeError(str(out.get("result") or "claude reported an error")[:400])
-    data = out.get("structured_output") if isinstance(out, dict) else None
-    if data is None and isinstance(out, dict) and isinstance(out.get("result"), str):
-        m = re.search(r"\{.*\}", out["result"], re.S)
-        if m:
-            try:
-                data = json.loads(m.group(0))
-            except json.JSONDecodeError:
-                data = None
-    if not isinstance(data, dict):
-        raise ClaudeError("claude returned no structured data")
-    return data
+    return out if isinstance(out, dict) else {}
 
 
 # --- import ----------------------------------------------------------------------
@@ -700,7 +712,7 @@ def import_cv(filename: str, data: bytes, method: str = "claude", base: Path = P
     used = "local"
     if method == "claude":
         try:
-            extracted = run_claude(EXTRACT_PROMPT.format(text=text[:60000]), PROFILE_SCHEMA)
+            extracted = run_claude(EXTRACT_PROMPT.format(text=text[:60000]), PROFILE_SCHEMA, task="cv_import")
             used = "claude"
         except ClaudeError as exc:
             warnings.append(f"Claude extraction failed ({exc}); used the local parser instead - please review.")
@@ -908,7 +920,7 @@ def polish(cv: dict, profile: dict, max_bullets: int = 4) -> dict:
     prompt = POLISH_PROMPT.format(max_bullets=max_bullets, language=cv.get("language") or "English",
                                   profile=json.dumps(facts, ensure_ascii=False),
                                   posting=(f"{cv['job_title']} at {cv['company']}\n" + cv.get("posting", ""))[:20000])
-    out = run_claude(prompt, POLISH_SCHEMA)
+    out = run_claude(prompt, POLISH_SCHEMA, task="cv_tailor")
     by_id = {x.get("id"): x.get("bullets") for x in out.get("experience", []) if isinstance(x, dict)}
     by_pid = {x.get("id"): x.get("bullets") for x in out.get("projects", []) if isinstance(x, dict)}
     cv = json.loads(json.dumps(cv))
