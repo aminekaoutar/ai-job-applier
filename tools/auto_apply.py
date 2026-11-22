@@ -82,6 +82,10 @@ EXPIRED_TEXT = re.compile(
     r"(n'est plus disponible|n’est plus disponible|offre (a expiré|expirée|pourvue|n'existe plus)|"
     r"n.accepte plus de candidatures|no longer accepting applications|this job (is )?no longer available|"
     r"job (has )?expired|position has been filled)", re.I)
+# Free-Work and others redirect a closed offer to their job search with ?expire=1.
+EXPIRED_URL = re.compile(r"[?&]expired?=(1|true)\b", re.I)
+# The site refused the automated browser (CDN / WAF error page). Never worked around.
+BLOCKED_TITLE = re.compile(r"request could not be satisfied|^access denied|^403 forbidden|^attention required", re.I)
 LOGIN_WALL = re.compile(
     r"(cr[ée]er un compte|se connecter|connectez-vous|identifiez-vous|sign in to apply|log in to apply|"
     r"sign in|create an account|anmelden)", re.I)
@@ -131,6 +135,10 @@ EXTRACT_JS = r"""
     if (['hidden', 'submit', 'button', 'reset', 'image', 'search'].includes(type)) continue;
     if (type !== 'file' && !vis(el)) continue;
     if (el.disabled || el.readOnly) continue;
+    // Site search bars and listing filters are never application fields.
+    if (el.closest('[role=search], form[action*=search], form[action*=recherche], header, nav')
+        || /^(q|query|keywords?|search|sort|locale)$/i.test(el.name || '')
+        || /mots.?cl|rechercher un|search jobs/i.test(el.placeholder || '')) continue;
     if (!el.dataset.aaId) el.dataset.aaId = 'f' + (n++);
     const required = el.required || el.getAttribute('aria-required') === 'true' || /\*\s*$/.test(labelOf(el));
     if (type === 'radio' || type === 'checkbox') {
@@ -288,11 +296,91 @@ def cv_facts(cv: dict | None) -> dict:
 
 
 def cv_matches_language(cv: dict, language: str, profile_language: str) -> bool:
-    """True when every line of the CV is in `language`: headings follow cv['language'], and the
-    bullets are either rewritten by Claude (polished, in cv['language']) or already the profile's."""
+    """True when every line of the CV is in `language`: headings follow cv['language']; the bullets
+    and labels (titles, degrees, languages) are the profile's own when it is in that language, else
+    rewritten by Claude (polished) and translated (labels_translated)."""
     if cv.get("language") != language:
         return False
-    return bool(cv.get("polished")) or profile_language == language
+    if profile_language == language:
+        return True
+    return bool(cv.get("polished")) and bool(cv.get("labels_translated"))
+
+
+LABELS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "headline": {"type": "string"},
+        "experience": {"type": "array", "items": {"type": "object", "properties": {
+            "index": {"type": "integer"}, "title": {"type": "string"}, "end": {"type": "string"}},
+            "required": ["index", "title", "end"]}},
+        "projects": {"type": "array", "items": {"type": "object", "properties": {
+            "index": {"type": "integer"}, "role": {"type": "string"}}, "required": ["index", "role"]}},
+        "education": {"type": "array", "items": {"type": "object", "properties": {
+            "index": {"type": "integer"}, "degree": {"type": "string"},
+            "details": {"type": "array", "items": {"type": "string"}}}, "required": ["index", "degree"]}},
+        "languages": {"type": "array", "items": {"type": "object", "properties": {
+            "index": {"type": "integer"}, "language": {"type": "string"}, "level": {"type": "string"}},
+            "required": ["index", "language", "level"]}},
+    },
+    "required": ["headline", "experience", "education", "languages"],
+}
+
+
+def translate_labels(cv: dict, language: str) -> tuple[dict, bool]:
+    """Translate the CV's short labels (headline, job titles, word end dates like 'Présent', degree
+    names, project roles, spoken languages) into `language`, so no line stays in the profile's
+    language. Names of companies, schools and places are kept. Returns (cv, translated)."""
+    src = {
+        "headline": (cv.get("basics") or {}).get("headline", ""),
+        "experience": [{"index": i, "title": e.get("title", ""), "end": e.get("end", "")}
+                       for i, e in enumerate(cv.get("experience", []))],
+        "projects": [{"index": i, "role": p.get("role", "")} for i, p in enumerate(cv.get("projects", []))],
+        "education": [{"index": i, "degree": ed.get("degree", ""), "details": ed.get("details", [])}
+                      for i, ed in enumerate(cv.get("education", []))],
+        "languages": [{"index": i, "language": l.get("language", ""), "level": l.get("level", "")}
+                      for i, l in enumerate(cv.get("languages", []))],
+    }
+    prompt = f"""Translate these CV labels into {language}. Same meaning and facts, only the language changes.
+
+Rules:
+- Job titles: the usual {language} equivalent ("Développeur IA (Alternance)" -> "AI Developer (Work-study)",
+  "Stage" -> "Internship"). Keep a title that is already in {language}.
+- "end": translate words that mean ongoing ("Présent", "Aujourd'hui", "en cours" -> "Present"; or the
+  reverse into French). Keep dates and numbers exactly as given.
+- Degrees: translate the degree type and field, and keep a French diploma's own name in brackets when it has
+  no exact equivalent, e.g. "Master's in AI, Big Data & Development (Mastère)". Never upgrade a degree.
+- Spoken languages and levels: translate ("Arabe (Langue maternelle)" -> language "Arabic", level "Native").
+- Project roles: translate; keep "GitHub" as is.
+- Never add, drop or change a fact. Keep every index.
+
+<labels>
+{json.dumps(src, ensure_ascii=False, indent=1)}
+</labels>"""
+    try:
+        out = ps.run_claude(prompt, LABELS_SCHEMA, timeout=180, task="cv_translate")
+    except ps.ClaudeError as exc:
+        print(f"  ! labels not translated: {str(exc)[:100]}")
+        return cv, False
+    cv = json.loads(json.dumps(cv))
+
+    def put(items, key, rows, fields):
+        for row in rows or []:
+            i = row.get("index")
+            if isinstance(i, int) and 0 <= i < len(items):
+                for f in fields:
+                    v = row.get(f)
+                    if isinstance(v, str) and v.strip():
+                        items[i][f] = v.strip()
+                    elif isinstance(v, list) and v:
+                        items[i][f] = [str(x).strip() for x in v if str(x).strip()]
+
+    if isinstance(out.get("headline"), str) and out["headline"].strip():
+        cv["basics"]["headline"] = out["headline"].strip()
+    put(cv.get("experience", []), "experience", out.get("experience"), ("title", "end"))
+    put(cv.get("projects", []), "projects", out.get("projects"), ("role",))
+    put(cv.get("education", []), "education", out.get("education"), ("degree", "details"))
+    put(cv.get("languages", []), "languages", out.get("languages"), ("language", "level"))
+    return cv, True
 
 
 def language_cv(job: dict, profile_dir: Path, posting: str, language: str,
@@ -327,6 +415,9 @@ def language_cv(job: dict, profile_dir: Path, posting: str, language: str,
     except ps.ClaudeError as exc:
         if profile_language != language:
             return None, None, f"could not write a {language} CV ({str(exc)[:80]}) - attach one yourself"
+    if profile_language != language:
+        cv, translated = translate_labels(cv, language)
+        cv["labels_translated"] = translated
     cv = ps.save_tailored(cv, profile_dir)
     import batch
     pdf = batch.render_pdf(cv, profile_dir)
@@ -541,9 +632,12 @@ HAS_FORM_JS = r"""
 () => {
   const shown = e => { const r = e.getBoundingClientRect(); const s = getComputedStyle(e);
     return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none'; };
+  const searchy = e => !!e.closest('[role=search], form[action*=search], form[action*=recherche], header, nav')
+    || /^(q|query|keywords?|search|sort|locale)$/i.test(e.name || '')
+    || /mots.?cl|rechercher un|search jobs/i.test(e.placeholder || '');
   const usable = e => { const t = (e.getAttribute('type') || e.tagName).toLowerCase();
     return !['hidden', 'submit', 'button', 'search', 'checkbox', 'radio', 'reset', 'image'].includes(t)
-      && (t === 'file' || shown(e)); };
+      && !searchy(e) && (t === 'file' || shown(e)); };
   const ok = root => { const els = [...root.querySelectorAll('input, textarea, select')].filter(usable);
     return els.length >= 3 && els.some(e => e.type !== 'file'); };
   // A newsletter box or a search bar is one or two fields; an application form is three or more.
@@ -707,8 +801,14 @@ def page_text(page) -> str:
 
 
 def page_state(page) -> str | None:
-    """'expired' / 'login_needed' when the offer cannot be applied to from this page."""
-    if EXPIRED_TEXT.search(page_text(page)[:20000]):
+    """'blocked' / 'expired' / 'login_needed' when the offer cannot be applied to from this page."""
+    try:
+        title = page.title() or ""
+    except Exception:  # noqa: BLE001
+        title = ""
+    if BLOCKED_TITLE.search(title):
+        return "blocked"
+    if EXPIRED_URL.search(page.url or "") or EXPIRED_TEXT.search(page_text(page)[:20000]):
         return "expired"
     if LOGIN_URL.search(urlsplit(page.url).path):
         return "login_needed"
@@ -829,6 +929,17 @@ def follow_apply(page, ctx):
     return page, None
 
 
+def wait_for_fields(page, tries: int = 5, pause_ms: int = 2000) -> bool:
+    """Application modals (HelloWork's) render their fields a few seconds after the click:
+    wait until at least one fillable field shows. False = still nothing to fill, never submit."""
+    for i in range(tries):
+        if collect(page):
+            return True
+        if i < tries - 1:
+            page.wait_for_timeout(pause_ms)
+    return False
+
+
 def settle(page) -> None:
     try:
         page.wait_for_load_state("domcontentloaded", timeout=30000)
@@ -903,6 +1014,9 @@ def main(argv=None) -> int:
         settle(page)
         if (state := page_state(page)) == "expired":
             return finish("expired", True, why="the offer is no longer open")
+        if state == "blocked":
+            return finish("blocked", True, why="the site refused the automated browser - run it in visible Chrome "
+                                              "(not --headless) after logging in, or apply by hand")
 
         # The whole application follows the posting's language: CV, answers, motivation text.
         posting = str(job.get("posting") or "").strip() or page_text(page)[:12000]
@@ -928,7 +1042,7 @@ def main(argv=None) -> int:
         if state == "login_needed" or (not has_form(page) and LOGIN_WALL.search(page_text(page)[:30000])):
             return finish("login_needed", False, form=page.url,
                           why="this site needs you logged in - use 'Log in to job sites' once, then retry")
-        if not has_form(page):
+        if not has_form(page) or not wait_for_fields(page):
             return finish("no_form", False, form=page.url,
                           why="no application form found (login wall, email-only offer, or unusual site)")
 

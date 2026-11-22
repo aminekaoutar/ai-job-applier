@@ -45,9 +45,12 @@ class PostingLanguage(unittest.TestCase):
         self.assertEqual(aa.posting_language(""), "French")  # French market default
 
     def test_cv_matches_language(self):
-        self.assertTrue(aa.cv_matches_language({"language": "English", "polished": True}, "English", "French"))
+        full = {"language": "English", "polished": True, "labels_translated": True}
+        self.assertTrue(aa.cv_matches_language(full, "English", "French"))
         # Headings in English but bullets still the French profile's: not an English CV.
         self.assertFalse(aa.cv_matches_language({"language": "English", "polished": False}, "English", "French"))
+        # Bullets English but titles / degrees / "Présent" still French: not an English CV either.
+        self.assertFalse(aa.cv_matches_language({"language": "English", "polished": True}, "English", "French"))
         self.assertTrue(aa.cv_matches_language({"language": "French", "polished": False}, "French", "French"))
         self.assertFalse(aa.cv_matches_language({"language": "French", "polished": True}, "English", "French"))
 
@@ -86,13 +89,24 @@ class LanguageCV(unittest.TestCase):
                 out.write_bytes(b"%PDF-1.4\n")
                 return out
 
+            def fake_run(prompt, schema, timeout=300, task="claude"):
+                self.assertEqual(task, "cv_translate")
+                self.assertIn("Ingénieur données", prompt)
+                return {"headline": "Data Engineer", "experience": [{"index": 0, "title": "Data Engineer", "end": ""}],
+                        "education": [], "languages": []}
+
             import batch
             job = {"cv_id": "mixed", "_path": str(rec_path), "title": "Data Engineer", "company": "Acme", "key": "k1"}
             with mock.patch.object(ps, "polish", side_effect=fake_polish), \
+                    mock.patch.object(aa.ps, "run_claude", side_effect=fake_run), \
                     mock.patch.object(batch, "render_pdf", side_effect=fake_render):
                 pdf, cv, note = aa.language_cv(job, base, EN_POSTING, "English")
             self.assertEqual(cv["language"], "English")
             self.assertTrue(cv["polished"])
+            self.assertTrue(cv["labels_translated"])
+            self.assertEqual(cv["basics"]["headline"], "Data Engineer")
+            self.assertEqual(cv["experience"][0]["title"], "Data Engineer")
+            self.assertEqual(cv["experience"][0]["company"], "Acme")  # names are never translated
             self.assertEqual(cv["experience"][0]["bullets"], ["Built Airflow data pipelines for the platform"])
             self.assertTrue(pdf.is_file())
             self.assertNotEqual(cv["id"], "mixed")
@@ -158,6 +172,51 @@ class Scope(unittest.TestCase):
 
     def test_linkedin_not_in_login_sites(self):
         self.assertFalse(any("linkedin" in u for u in aa.LOGIN_SITES))
+
+
+class PageStates(unittest.TestCase):
+    """Found by a dry run on real offers: Free-Work's expired redirect, WTTJ's CDN block, HelloWork's slow modal."""
+
+    @classmethod
+    def setUpClass(cls):
+        try:
+            from playwright.sync_api import sync_playwright
+            cls.pw = sync_playwright().start()
+            cls.browser = cls.pw.chromium.launch(headless=True)
+        except Exception as exc:  # noqa: BLE001
+            raise unittest.SkipTest(f"Playwright/Chromium unavailable: {exc}")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.browser.close()
+        cls.pw.stop()
+
+    def test_job_search_page_is_not_an_application_form(self):
+        page = self.browser.new_page()
+        page.set_content("""<form action="/fr/tech-it/jobs"><input name=query placeholder="Mots-clé, métier…">
+            <select name=sort><option>date</option></select><select name=locale><option>fr</option></select>
+            <button>Rechercher</button></form>""")
+        self.assertFalse(aa.has_form(page))
+        self.assertEqual(aa.collect(page), [])
+        page.close()
+
+    def test_expired_redirect_and_blocked_page(self):
+        self.assertTrue(aa.EXPIRED_URL.search("https://www.free-work.com/fr/tech-it/jobs?expire=1&query=IA"))
+        self.assertFalse(aa.EXPIRED_URL.search("https://www.free-work.com/fr/tech-it/job-mission/chef-de-projet-ia"))
+        page = self.browser.new_page()
+        page.set_content("<title>ERROR: The request could not be satisfied</title><h1>403 ERROR</h1>")
+        self.assertEqual(aa.page_state(page), "blocked")
+        page.close()
+
+    def test_waits_for_a_form_that_renders_late(self):
+        page = self.browser.new_page()
+        page.set_content("""<div id=m></div><script>setTimeout(() => { document.getElementById('m').innerHTML =
+            '<form><label>Prénom <input name=fn></label><label>Nom <input name=ln></label>' +
+            '<label>Email <input type=email name=em></label></form>'; }, 1500)</script>""")
+        self.assertTrue(aa.wait_for_fields(page, tries=4, pause_ms=800))
+        page.set_content("<p>nothing to fill</p>")
+        self.assertFalse(aa.wait_for_fields(page, tries=2, pause_ms=100))
+        page.close()
 
 
 class Captcha(unittest.TestCase):
