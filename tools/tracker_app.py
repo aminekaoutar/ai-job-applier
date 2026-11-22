@@ -51,6 +51,8 @@ import batch  # noqa: E402
 import gmail_drafts  # noqa: E402
 import hunter  # noqa: E402
 import profile_store as ps  # noqa: E402
+import auto_apply as aa  # noqa: E402
+import subprocess  # noqa: E402
 
 PAGE = Path(__file__).resolve().parent / "tracker_app.html"
 
@@ -417,10 +419,115 @@ class SearchJob:
             return dict(self.state)
 
 
+AUTO_APPLY = Path(__file__).resolve().parent / "auto_apply.py"
+APPLIED_STATUSES = {"submitted", "submitted_unconfirmed"}
+
+
+class ApplyQueue:
+    """Applications run one at a time: they share one saved Chrome profile (profile/browser/)."""
+
+    def __init__(self, run_one):
+        self.lock = threading.Lock()
+        self.queue: list[tuple[str, str, bool]] = []
+        self.current = None
+        self.results: dict[str, dict] = {}
+        self.thread = None
+        self.run_one = run_one
+
+    def busy(self) -> bool:
+        with self.lock:
+            return bool(self.current or self.queue)
+
+    def add(self, items: list[tuple[str, str, bool]]) -> int:
+        with self.lock:
+            known = {k for k, _, _ in self.queue} | ({self.current} if self.current else set())
+            added = 0
+            for item in items:
+                if item[0] not in known:
+                    self.queue.append(item)
+                    self.results[item[0]] = {"status": "queued"}
+                    known.add(item[0])
+                    added += 1
+            if not (self.thread and self.thread.is_alive()):
+                self.thread = threading.Thread(target=self._work, daemon=True)
+                self.thread.start()
+            return added
+
+    def _work(self) -> None:
+        while True:
+            with self.lock:
+                if not self.queue:
+                    self.current = None
+                    return
+                key, url, submit = self.queue.pop(0)
+                self.current = key
+                self.results[key] = {"status": "running"}
+            try:
+                res = self.run_one(key, url, submit)
+            except Exception as exc:  # reported to the page, never swallowed
+                res = {"status": "error", "why": str(exc)[:300]}
+            with self.lock:
+                self.results[key] = res
+
+    def stop(self) -> None:
+        with self.lock:
+            for key, _, _ in self.queue:
+                self.results[key] = {"status": "cancelled"}
+            self.queue.clear()
+
+    def status(self) -> dict:
+        with self.lock:
+            return {"running": bool(self.current or self.queue), "current": self.current,
+                    "queued": [k for k, _, _ in self.queue], "results": dict(self.results)}
+
+
+def run_auto_apply(url: str, submit: bool, profile_dir: Path) -> dict:
+    """One tools/auto_apply.py run; its last `RESULT {...}` line is the outcome."""
+    cmd = [sys.executable, str(AUTO_APPLY), url, "--submit" if submit else "--no-submit", "--profile-dir", str(profile_dir)]
+    try:
+        done = subprocess.run(cmd, capture_output=True, text=True, timeout=1800, stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired:
+        return {"status": "error", "why": "gave up after 30 minutes"}
+    for line in reversed(done.stdout.splitlines()):
+        if line.startswith("RESULT "):
+            try:
+                return json.loads(line[7:])
+            except json.JSONDecodeError:
+                break
+    return {"status": "error", "why": (done.stderr or done.stdout or "auto_apply failed").strip()[-300:]}
+
+
+def in_docker() -> bool:
+    return Path("/.dockerenv").exists()
+
+
 def make_handler(tracker: Path, seen: Path, token: str, port_ref: dict, lock: threading.Lock,
                  profile_dir: Path = ps.PROFILE_DIR):
     search_job = SearchJob()
     batch_job = SearchJob()
+
+    def apply_one(key: str, url: str, submit: bool) -> dict:
+        res = run_auto_apply(url, submit, profile_dir)
+        status = res.get("status", "error")
+        record = load_outreach(key)
+        record["auto_apply"] = {"status": status, "on": date.today().isoformat(), "why": res.get("why", ""),
+                                "form": res.get("form", ""), "left": (res.get("left") or [])[:12]}
+        if status in APPLIED_STATUSES and not record.get("sent"):
+            opp = find_opportunity(key)
+            with lock:
+                version = read_tracker(tracker)[2]
+                apply_edit(tracker, version, "add", {
+                    "company": opp["company"], "role": opp["title"], "status": "applied", "channel": "auto-apply",
+                    "source": opp["url"], "deadline": opp.get("deadline") or "",
+                    "notes": f"applied via auto-apply {date.today().isoformat()}"
+                             + ("" if status == "submitted" else " (no confirmation page seen - check your inbox)"),
+                    "cv_file": f"profile/{record['pdf']}" if record.get("pdf") else "",
+                }, date.today())
+            record["sent"] = {"to": "application form", "on": date.today().isoformat()}
+        save_outreach(key, record)
+        return record["auto_apply"]
+
+    apply_queue = ApplyQueue(apply_one)
     profile_lock = threading.Lock()
     github_cache = {}  # username -> repos fetched by /api/github/repos
 
@@ -470,7 +577,8 @@ def make_handler(tracker: Path, seen: Path, token: str, port_ref: dict, lock: th
             if not r.get("cv_id"):
                 continue
             row = {k: r.get(k) for k in ("key", "company", "title", "url", "portal", "match", "cv_id", "coverage",
-                                         "from_title", "pdf", "contacts", "site", "site_note", "draft", "sent", "prepared")}
+                                         "from_title", "pdf", "contacts", "site", "site_note", "draft", "sent", "prepared",
+                                         "auto_apply")}
             rows.append(row)
         rows.sort(key=lambda r: (not r.get("contacts"), -(r.get("match") or 0)))
         return rows
@@ -559,6 +667,11 @@ def make_handler(tracker: Path, seen: Path, token: str, port_ref: dict, lock: th
                 return self._json(HTTPStatus.OK, search_job.status())
             if url.path == "/api/batch/status":
                 return self._json(HTTPStatus.OK, batch_job.status())
+            if url.path == "/api/apply/status":
+                return self._json(HTTPStatus.OK, apply_queue.status())
+            if url.path == "/api/apply/answers":
+                return self._json(HTTPStatus.OK, {"answers": aa.load_answers(profile_dir), "keys": aa.ANSWER_KEYS,
+                                                  "exists": (profile_dir / "answers.json").is_file()})
             if url.path == "/api/settings":
                 cfg = gmail_drafts.load_config(profile_dir) or {}
                 f = profile_dir / "daily" / "regions.json"
@@ -729,6 +842,45 @@ def make_handler(tracker: Path, seen: Path, token: str, port_ref: dict, lock: th
                 return self._json(HTTPStatus.OK, {"cv": {k: v for k, v in cv.items() if k != "posting"},
                                                   "posting": "" if from_title else posting, "from_title": from_title,
                                                   "pdf": bool(pdf), "tailored": ps.list_tailored(profile_dir)})
+
+            if path in {"/api/apply/start", "/api/apply/login"} and in_docker():
+                raise ValueError("applying opens Chrome on your computer - run the tracker on your Mac "
+                                 "(python3 tools/tracker_app.py), not in Docker")
+
+            if path == "/api/apply/start":
+                keys = [str(k) for k in (body.get("keys") or [])][:200]
+                if not keys:
+                    raise ValueError("no jobs selected")
+                answers = aa.load_answers(profile_dir)
+                submit = bool(body["submit"]) if "submit" in body else answers.get("auto_submit", True) is not False
+                items = []
+                for key in keys:
+                    opp = find_opportunity(key)
+                    items.append((key, opp["url"], submit))
+                added = apply_queue.add(items)
+                return self._json(HTTPStatus.OK, {"added": added, "submit": submit, **apply_queue.status()})
+
+            if path == "/api/apply/stop":
+                apply_queue.stop()
+                return self._json(HTTPStatus.OK, apply_queue.status())
+
+            if path == "/api/apply/login":
+                if apply_queue.busy():
+                    raise ValueError("wait until the current applications finish")
+                subprocess.Popen([sys.executable, str(AUTO_APPLY), "--login", "--profile-dir", str(profile_dir)],
+                                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return self._json(HTTPStatus.OK, {"ok": True})
+
+            if path == "/api/apply/answers":
+                raw = body.get("answers") or {}
+                if not isinstance(raw, dict):
+                    raise ValueError("answers must be an object")
+                clean = {k: str(raw.get(k) or "").strip()[:600] for k in aa.ANSWER_KEYS}
+                clean["consent"] = bool(raw.get("consent"))
+                clean["auto_submit"] = bool(raw.get("auto_submit"))
+                ps._atomic_write(profile_dir / "answers.json",
+                                 json.dumps(clean, ensure_ascii=False, indent=2).encode("utf-8"))
+                return self._json(HTTPStatus.OK, {"answers": clean})
 
             if path == "/api/batch/start":
                 _, rows, _ = read_tracker(tracker)

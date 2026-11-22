@@ -366,6 +366,14 @@ details summary { cursor: pointer; }
               <a class="btn" href="/api/sendlist.csv"><svg class="i"><use href="#i-file"/></svg> Export CSV</a>
             </div>
           </div>
+          <div class="toolbar" style="margin:8px 0 0">
+            <button class="btn accent" id="apply-shown"><svg class="i"><use href="#i-send"/></svg> Apply to all shown</button>
+            <button class="btn" id="apply-login"><svg class="i"><use href="#i-check"/></svg> Log in to job sites</button>
+            <button class="btn" id="apply-answers-btn"><svg class="i"><use href="#i-wand"/></svg> Answers for application forms</button>
+            <button class="btn hidden" id="apply-stop">Stop</button>
+            <span class="muted" id="apply-status" style="font-size:13px">Apply opens each offer in Chrome, finds the application form, fills it from your profile, attaches the CV and submits it.</span>
+          </div>
+          <div id="apply-panel" class="hidden" style="margin-top:10px"></div>
           <div class="toolbar">
             <div class="search"><svg class="i"><use href="#i-search"/></svg><input id="sq" type="search" placeholder="Search company, job, email…" aria-label="Search send list"></div>
             <label class="muted" style="display:flex;gap:6px;align-items:center;font-size:14px">Country<select id="s-country" aria-label="Country"><option value="">All countries</option></select></label>
@@ -1533,7 +1541,9 @@ function renderSendList() {
       const open = SEND_OPEN === r.key;
       return `<tr data-k="${esc(r.key)}"><td>${ring(r.match ?? 0)}</td>
         <td>${who(r.company, r.title, r.url)}</td><td>${email}</td><td>${cv}</td>
-        <td><div class="row-actions">${r.sent ? `<span class="tag ok">${icon("check")} sent ${esc(r.sent.on)}</span>` : ""}
+        <td><div class="row-actions">${r.sent ? `<span class="tag ok">${icon("check")} ${r.sent.to === "application form" ? "applied" : "sent"} ${esc(r.sent.on)}</span>` : ""}
+          ${applyTag(r)}
+          ${r.sent ? "" : `<button class="btn small accent s-apply" title="Fill and submit the application form on the job's website">${icon("send")} Apply</button>`}
           <button class="btn small ${c ? "primary" : ""} s-open">${icon("send")} ${r.draft ? "Email" : "Write email"}</button></div></td></tr>` +
         (open ? `<tr class="s-detail" data-k="${esc(r.key)}"><td colspan="5">${sendDetail(r)}</td></tr>` : "");
     }).join("") + "</tbody>";
@@ -1564,6 +1574,7 @@ $("#send-table").addEventListener("click", async (e) => {
   const btn = e.target.closest("button"); if (!btn) return;
   const box = document.querySelector(`tr.s-detail[data-k="${CSS.escape(key)}"]`);
   if (btn.classList.contains("s-open")) { openJob(key); return; }
+  if (btn.classList.contains("s-apply")) { startApply([key]); return; }
   if (!box) return;
   const to = () => box.querySelector(".s-to").value.trim();
   if (btn.classList.contains("s-write")) {
@@ -1588,6 +1599,90 @@ $("#send-table").addEventListener("input", (e) => {
 $("#s-posted").value = store("tracker.s-posted") || "";
 $("#s-found").value = store("tracker.s-found") || "";
 ["#sq", "#s-email", "#s-hide-sent", "#s-posted", "#s-found", "#s-portal", "#s-country"].forEach(s => $(s).addEventListener("input", renderSendList));
+
+// ---------- Apply: fill and submit the application form on the job's website ----------
+const APPLY_LABEL = {
+  queued: ["", "queued"], running: ["", "applying…"], submitted: ["ok", "applied ✓"],
+  submitted_unconfirmed: ["ok", "submitted (no confirmation page)"], filled: ["", "filled - submit in Chrome"],
+  needs_you: ["warn", "needs you - finish in Chrome"], login_needed: ["warn", "log in to this site"],
+  expired: ["", "offer expired"], easy_apply: ["", "LinkedIn Easy Apply - not automated"],
+  no_form: ["warn", "no form found"], cancelled: ["", "cancelled"], error: ["warn", "error"],
+};
+let APPLY = { results: {} };
+
+function applyTag(r) {
+  const res = APPLY.results[r.key] || r.auto_apply;
+  if (!res || !res.status) return "";
+  const [cls, text] = APPLY_LABEL[res.status] || ["", res.status];
+  const tip = [res.why, ...(res.left || [])].filter(Boolean).join("\n");
+  const busy = res.status === "running" ? ` <span class="busy"></span>` : "";
+  return `<span class="tag ${cls}" title="${esc(tip)}"${cls === "warn" ? ' style="background:#fff3e0;color:#9a3412"' : ""}>${esc(text)}${busy}</span>`;
+}
+
+async function startApply(keys) {
+  try {
+    const a = await (await fetch("/api/apply/answers")).json();
+    if (!a.exists) { toast("First fill in the answers for application forms, then click Apply again."); openAnswers(); return; }
+    const out = await api("/api/apply/start", { keys });
+    toast(out.submit ? `Applying to ${out.added} job(s) - Chrome opens for each` : `Filling ${out.added} form(s) - you submit in Chrome`);
+    pollApply();
+  } catch (err) { toast(err.message); }
+}
+
+async function pollApply() {
+  APPLY = await (await fetch("/api/apply/status")).json();
+  const done = Object.values(APPLY.results).filter(x => x.status === "submitted" || x.status === "submitted_unconfirmed").length;
+  $("#apply-stop").classList.toggle("hidden", !APPLY.running);
+  if (APPLY.running) {
+    const cur = SEND.find(x => x.key === APPLY.current);
+    $("#apply-status").innerHTML = `<span class="busy">Applying${cur ? ": " + esc(cur.company) + " - " + esc(cur.title) : ""}</span> · ${APPLY.queued.length} waiting · ${done} applied`;
+  } else if (Object.keys(APPLY.results).length) {
+    $("#apply-status").textContent = `Finished: ${done} applied. Hover a status for what is left to do.`;
+  }
+  renderSendList();
+  if (APPLY.running) setTimeout(pollApply, 3000); else { loadSendList(); load(); }
+}
+
+async function openAnswers() {
+  const box = $("#apply-panel");
+  if (!box.classList.contains("hidden")) { box.classList.add("hidden"); return; }
+  const a = await (await fetch("/api/apply/answers")).json();
+  const v = a.answers || {};
+  const autoSubmit = a.exists ? !!v.auto_submit : true;
+  box.innerHTML = `<div class="panel" style="padding:14px">
+    <p class="muted" style="margin:0 0 10px">Application forms ask things your CV does not say. Answer them once; Claude uses only these and your profile, and leaves anything else for you. Blank = never answered.</p>
+    <div class="fields" style="grid-template-columns:1fr 1fr">
+      ${Object.entries(a.keys).map(([k, label]) => `<label>${esc(label)}${k === "extra"
+        ? `<textarea data-k="${k}" rows="3">${esc(v[k] || "")}</textarea>` : `<input data-k="${k}" value="${esc(v[k] || "")}">`}</label>`).join("")}
+    </div>
+    <label style="display:flex;gap:8px;align-items:center;margin-top:10px"><input type="checkbox" id="ans-consent" ${v.consent ? "checked" : ""}>
+      Tick the consent boxes a site requires to apply (privacy policy, terms, account creation) - never newsletters or job alerts</label>
+    <label style="display:flex;gap:8px;align-items:center;margin-top:6px"><input type="checkbox" id="ans-submit" ${autoSubmit ? "checked" : ""}>
+      Submit automatically when every required field is answered (otherwise the form is filled and left open for you)</label>
+    <div class="toolbar" style="margin:10px 0 0"><button class="btn primary" id="ans-save">${icon("check")} Save answers</button></div></div>`;
+  box.classList.remove("hidden");
+  $("#ans-save").addEventListener("click", async () => {
+    const answers = Object.fromEntries([...box.querySelectorAll("[data-k]")].map(e => [e.dataset.k, e.value]));
+    answers.consent = $("#ans-consent").checked; answers.auto_submit = $("#ans-submit").checked;
+    try { await api("/api/apply/answers", { answers }); toast("Answers saved"); box.classList.add("hidden"); }
+    catch (err) { toast(err.message); }
+  });
+}
+
+$("#apply-answers-btn").addEventListener("click", openAnswers);
+$("#apply-login").addEventListener("click", async () => {
+  try { await api("/api/apply/login", {}); toast("Chrome opened: log in on each tab, then close the window."); }
+  catch (err) { toast(err.message); }
+});
+$("#apply-stop").addEventListener("click", async () => { await api("/api/apply/stop", {}); pollApply(); });
+$("#apply-shown").addEventListener("click", () => {
+  const keys = [...document.querySelectorAll("#send-table tr[data-k]")].map(tr => tr.dataset.k)
+    .filter(k => { const r = SEND.find(x => x.key === k); return r && !r.sent; });
+  if (!keys.length) { toast("No unapplied jobs in this view"); return; }
+  if (!confirm(`Apply to the ${keys.length} job(s) shown? Each opens in Chrome, one after another.`)) return;
+  startApply([...new Set(keys)]);
+});
+fetch("/api/apply/status").then(r => r.json()).then(s => { APPLY = s; if (s.running) pollApply(); }).catch(() => {});
 
 async function pollBatch() {
   const st = await (await fetch("/api/batch/status")).json();

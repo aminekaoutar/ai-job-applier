@@ -83,7 +83,7 @@ class BrowserFill(unittest.TestCase):
         page.set_content(FORM)
         seen = {}
 
-        def fake_claude(fields, profile, job):
+        def fake_claude(fields, profile, job, standing=None):
             seen.update({f["label"]: f for f in fields})
             by = {f["label"]: f["id"] for f in fields}
             return ({by["Niveau d'anglais"]: "Courant"},
@@ -109,6 +109,38 @@ class BrowserFill(unittest.TestCase):
         missing = {label for label, _, _ in rep["missing"]}
         self.assertIn("Avez-vous besoin d'un visa ? *", missing)
         self.assertNotEqual(page.title(), "SUBMITTED")
+        # A required question is still open, so auto-submit must not fire.
+        self.assertTrue(aa.has_required_empty(page))
+        page.close()
+
+    def test_submits_complete_form_and_detects_confirmation(self):
+        page = self.browser.new_page()
+        page.set_content(FORM.replace(
+            "document.title='SUBMITTED';return false",
+            "document.title='SUBMITTED';document.body.innerHTML='<h1>Merci pour votre candidature !</h1>';return false"))
+
+        def fake_claude(fields, profile, job, standing=None):
+            self.assertEqual(standing.get("needs_sponsorship"), "no")
+            by = {f["label"]: f["id"] for f in fields}
+            return ({by["Niveau d'anglais"]: "Courant", by["Avez-vous besoin d'un visa ? *"]: "Non",
+                     by["J'accepte la politique de confidentialité"]: "J'accepte la politique de confidentialité"}, {})
+
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(aa, "claude_answers", fake_claude):
+            cv = Path(d) / "cv.pdf"
+            cv.write_bytes(b"%PDF-1.4\n")
+            rep = aa.fill_page(page, {"basics": BASICS}, {}, cv, set(), dry=False,
+                               standing={"needs_sponsorship": "no", "consent": True})
+        self.assertEqual([m for m in rep["missing"] if m[1]], [])
+        self.assertTrue(page.is_checked("input[name=visa][value=n]"))
+        self.assertFalse(aa.has_required_empty(page))
+        self.assertEqual(aa.try_submit(page), "submitted")
+        self.assertEqual(page.title(), "SUBMITTED")
+        page.close()
+
+    def test_expired_offer_is_detected(self):
+        page = self.browser.new_page()
+        page.set_content("<p>L'offre n°214RZRX n'est plus disponible.</p>")
+        self.assertEqual(aa.page_state(page), "expired")
         page.close()
 
 
