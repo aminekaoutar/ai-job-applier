@@ -1,12 +1,12 @@
 """tools/auto_apply.py: posting language, a CV in that language, the answer context,
 LinkedIn skipped, CAPTCHA stops the run."""
 
-import io
+
 import json
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+
 from pathlib import Path
 from unittest import mock
 
@@ -155,20 +155,34 @@ class AnswerContext(unittest.TestCase):
 
 
 class Scope(unittest.TestCase):
-    def test_linkedin_offers_are_skipped_without_a_browser(self):
+    def test_linkedin_company_website_link_is_followed(self):
+        # LinkedIn's redirect to the employer is decoded; plain external links pass through.
+        self.assertEqual(aa.linkedin_external(
+            "/jobs/view/externalApply/4471708493?url=https%3A%2F%2Fjobs.lever.co%2Facme%2F123&urlHash=x"),
+            "https://jobs.lever.co/acme/123")
+        self.assertEqual(aa.linkedin_external("https://careers.acme.com/apply/9"), "https://careers.acme.com/apply/9")
+
+    def test_nothing_that_stays_on_linkedin_is_followed(self):
+        self.assertIsNone(aa.linkedin_external("/jobs/view/4471708493/"))
+        self.assertIsNone(aa.linkedin_external("/jobs/view/externalApply/1?url=https%3A%2F%2Fwww.linkedin.com%2Fx"))
+        self.assertIsNone(aa.linkedin_external("javascript:void(0)"))
+
+    def test_easy_apply_only_offer_is_never_entered(self):
         try:
-            import playwright  # noqa: F401
+            from playwright.sync_api import sync_playwright
         except ImportError:
             self.skipTest("playwright not installed")
-        with tempfile.TemporaryDirectory() as d:
-            base = make_profile_dir(d)
-            buf = io.StringIO()
-            with redirect_stdout(buf), mock.patch.object(aa, "open_browser") as browser:
-                rc = aa.main(["https://fr.linkedin.com/jobs/view/4471708493/", "--profile-dir", str(base)])
-            browser.assert_not_called()
-            self.assertEqual(rc, 2)
-            result = json.loads(buf.getvalue().split("RESULT ", 1)[1].splitlines()[0])
-            self.assertEqual(result["status"], "skipped_linkedin")
+        with sync_playwright() as pw:
+            try:
+                browser = pw.chromium.launch(headless=True)
+            except Exception as exc:  # noqa: BLE001
+                self.skipTest(f"Chromium unavailable: {exc}")
+            page = browser.new_page()
+            page.set_content("""<h1>ML Engineer</h1><button onclick="document.title='EASY'">Easy Apply</button>
+                <a href="/jobs/view/123/">Similar jobs</a>""")
+            self.assertFalse(aa.leave_linkedin(page, page.context))
+            self.assertNotEqual(page.title(), "EASY")  # Easy Apply was not clicked
+            browser.close()
 
     def test_linkedin_not_in_login_sites(self):
         self.assertFalse(any("linkedin" in u for u in aa.LOGIN_SITES))

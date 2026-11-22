@@ -17,8 +17,10 @@ profile/answers.json, which the tracker's Send list edits. A final line
 login_needed | easy_apply | no_form.
 
 Where: company career sites (and the ATS they use), HelloWork and Welcome to
-the Jungle. LinkedIn offers are skipped (status skipped_linkedin), never
-automated.
+the Jungle. A LinkedIn offer is only a pointer: the tool follows its
+"Apply on company website" link to the employer's site and applies there.
+Easy Apply is never clicked or filled (status easy_apply), and nothing is
+ever filled on linkedin.com.
 
 Per job:
   1. open the URL in a visible Chrome with its own saved browser profile
@@ -57,7 +59,7 @@ import sys
 import time
 from datetime import date
 from pathlib import Path
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import parse_qs, urljoin, urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import profile_store as ps  # noqa: E402
@@ -657,8 +659,26 @@ def has_form(page) -> bool:
     return False
 
 
+def linkedin_external(href: str, base: str = "https://www.linkedin.com/") -> str | None:
+    """The employer's URL behind a LinkedIn Apply link: a plain off-LinkedIn link, or the `url=`
+    of LinkedIn's /jobs/view/externalApply/ redirect. None for anything that stays on LinkedIn."""
+    full = urljoin(base, href or "")
+    parts = urlsplit(full)
+    if parts.scheme not in {"http", "https"}:
+        return None
+    if not LINKEDIN_HOST.search(parts.hostname or ""):
+        return full
+    if "externalApply" in parts.path:
+        target = parse_qs(parts.query).get("url", [""])[0]
+        tparts = urlsplit(target)
+        if tparts.scheme in {"http", "https"} and not LINKEDIN_HOST.search(tparts.hostname or ""):
+            return target
+    return None
+
+
 def leave_linkedin(page, context) -> bool:
-    """Follow a LinkedIn job page's external Apply link. False when only Easy Apply exists."""
+    """Follow a LinkedIn job page's 'Apply on company website' link to the employer's site.
+    False when the job only has Easy Apply: that is never clicked or automated."""
     page.wait_for_timeout(2500)
     for a in page.locator("a[href]").all()[:400]:
         try:
@@ -666,8 +686,9 @@ def leave_linkedin(page, context) -> bool:
             label = (a.inner_text(timeout=500) or "").strip()
         except Exception:  # noqa: BLE001
             continue
-        if APPLY_TEXT.match(label) and href and "linkedin.com" not in urlsplit(urljoin(page.url, href)).netloc:
-            page.goto(urljoin(page.url, href), wait_until="domcontentloaded")
+        target = linkedin_external(href, page.url)
+        if target and (APPLY_TEXT.match(label) or "externalApply" in href):
+            page.goto(target, wait_until="domcontentloaded")
             return True
     if page.get_by_role("button", name=EASY_APPLY).count():
         return False
@@ -981,12 +1002,6 @@ def main(argv=None) -> int:
     job = find_job(args.url, args.profile_dir)
     print(f"Job: {job.get('title', '?')} @ {job.get('company', '?')}" if job else "Job: not in the tracker's Send list")
     base = {"url": args.url, "key": job.get("key", ""), "company": job.get("company", ""), "title": job.get("title", "")}
-    if LINKEDIN_HOST.search(urlsplit(args.url).hostname or ""):
-        out = {"status": "skipped_linkedin", **base,
-               "why": "LinkedIn is not automated - apply on the company's own site, HelloWork or Welcome to the Jungle"}
-        print("RESULT " + json.dumps(out, ensure_ascii=False))
-        log(args.profile_dir, {"date": str(date.today()), **out})
-        return 2
     print(f"Mode: {'apply - submits when every required field is answered' if submit else 'fill only - you click Submit'}")
     interactive = sys.stdin.isatty()
 
@@ -1018,9 +1033,21 @@ def main(argv=None) -> int:
             return finish("blocked", True, why="the site refused the automated browser - run it in visible Chrome "
                                               "(not --headless) after logging in, or apply by hand")
 
-        # The whole application follows the posting's language: CV, answers, motivation text.
+        # The posting is read on the offer page itself (a LinkedIn offer is left right after).
         posting = str(job.get("posting") or "").strip() or page_text(page)[:12000]
         language = posting_language(posting)
+
+        page, state = follow_apply(page, ctx)
+        if state == "easy_apply":
+            return finish("easy_apply", True, why="LinkedIn Easy Apply only - never automated; "
+                                                  "no company-website link on this offer")
+        if LINKEDIN_HOST.search(urlsplit(page.url).hostname or ""):
+            # Nothing is ever filled on LinkedIn itself (that would be Easy Apply).
+            return finish("login_needed" if state == "login_needed" else "easy_apply", True, form=page.url,
+                          why="no 'Apply on company website' link reachable on this LinkedIn offer")
+        print(f"Form page: {page.url}")
+
+        # The whole application follows the posting's language: CV, answers, motivation text.
         github = github_context(profile, args.profile_dir)
         if args.cv or args.dry_run:
             cv, cv_json, cv_note = cv_for(job, args.profile_dir, args.cv), None, "given with --cv" if args.cv else "dry run"
@@ -1031,11 +1058,6 @@ def main(argv=None) -> int:
         print(f"GitHub projects in context: {len(github)}")
         base.update(cv=str(cv or ""), language=language)
         context = {"language": language, "posting": posting, "cv": cv_facts(cv_json), "github": github}
-
-        page, state = follow_apply(page, ctx)
-        if state == "easy_apply":
-            return finish("easy_apply", True, why="LinkedIn Easy Apply only - not automated (LinkedIn's terms)")
-        print(f"Form page: {page.url}")
         state = state or page_state(page)
         if state == "expired":
             return finish("expired", True, form=page.url, why="the offer is no longer open")
