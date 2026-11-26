@@ -969,6 +969,56 @@ def wait_for_code(page, timeout_s: int = 300):
     return None, page
 
 
+CODE_INPUTS = ("input[autocomplete=one-time-code]:visible, input[name*=code i]:visible, "
+               "input[id*=code i]:visible, input[inputmode=numeric]:visible")
+VERIFY_TEXT = re.compile(r"^\s*(valider|confirmer|vérifier|verify|confirm|continuer|continue)\s*$", re.I)
+
+
+def type_code(page, code: str) -> bool:
+    """Type a one-time code into the page's code box(es): one box, or one box per digit."""
+    boxes = page.locator(CODE_INPUTS)
+    if not boxes.count():
+        return False
+    try:
+        boxes.first.click(timeout=3000)
+        if boxes.count() == 1:
+            boxes.first.fill("")
+        page.keyboard.type(code, delay=90)  # per-digit boxes move focus by themselves
+        page.wait_for_timeout(2000)
+        if EMAIL_CODE.search(page_text(page)[:30000]):  # not auto-validated: press the step's button
+            btn = form_buttons(page, VERIFY_TEXT)
+            if btn:
+                btn[0].click(timeout=5000)
+    except Exception:  # noqa: BLE001
+        return False
+    return True
+
+
+def mailbox_code(page, since: float, config: Path | None = None) -> bool:
+    """Read the code the site just emailed from the job mailbox (tools/job_mailbox.py) and type it.
+    False when no mailbox is set up or no code arrived - the caller falls back to the candidate."""
+    try:
+        import job_mailbox
+    except ImportError:
+        return False
+    config = config or job_mailbox.CONFIG
+    addr = job_mailbox.address(config)
+    if not addr:
+        return False
+    site = urlsplit(page.url).hostname or ""
+    print(f"  reading the code {site} emailed to {addr}...")
+    try:
+        code = job_mailbox.latest_code(site, since, timeout_s=120, config_path=config)
+    except job_mailbox.MailboxError as exc:
+        print(f"  ! {exc}")
+        return False
+    if not code:
+        print("  ! no code arrived within 2 minutes")
+        return False
+    print("  code received - typing it")
+    return type_code(page, code)
+
+
 def try_submit(page, cv_attached: bool = False) -> str:
     """submit_step's outcome only (a handoff counts as next_page)."""
     outcome, _ = submit_step(page, cv_attached)
@@ -1077,6 +1127,13 @@ def main(argv=None) -> int:
             return login(pw, browser_dir)
 
     profile = load_profile(args.profile_dir)
+    try:  # a dedicated job mailbox: forms get its address, so the sites' codes land where the tool reads
+        import job_mailbox
+        if (jm := job_mailbox.address(args.profile_dir / "mailbox.json")):
+            profile.setdefault("basics", {})["email"] = jm
+            print(f"Applying with the job mailbox {jm}")
+    except ImportError:
+        pass
     standing = load_answers(args.profile_dir)
     submit = (args.submit or bool(standing.get("auto_submit"))) and not args.no_submit and not args.dry_run
     job = find_job(args.url, args.profile_dir)
@@ -1155,6 +1212,10 @@ def main(argv=None) -> int:
         if state == "login_needed" or (not has_form(page) and LOGIN_WALL.search(page_text(page)[:30000])):
             return finish("login_needed", False, form=page.url,
                           why="this site needs you logged in - use 'Log in to job sites' once, then retry")
+        if EMAIL_CODE.search(page_text(page)[:30000]) and mailbox_code(page, time.time() - 900, args.profile_dir / "mailbox.json"):
+            outcome, page = wait_for_code(page, timeout_s=45)
+            settle(page)
+            page, _ = follow_apply(page, ctx)
         if EMAIL_CODE.search(page_text(page)[:30000]):
             # An account waiting for its emailed code (HelloWork) shows the code step before any form.
             if args.headless:
@@ -1203,7 +1264,25 @@ def main(argv=None) -> int:
                 return finish("needs_you", False, form=page.url, filled=filled,
                               left=left + ["CAPTCHA - solve it in Chrome, then click Submit"],
                               why="the site asks for a human check")
+            clicked_at = time.time()
             outcome, page = submit_step(page, cv_attached)
+            if outcome == "email_code" and mailbox_code(page, clicked_at - 30, args.profile_dir / "mailbox.json"):
+                code_outcome, page = wait_for_code(page, timeout_s=45)
+                outcome = {"submitted": "submitted", "handoff": "handoff"}.get(code_outcome or "", "email_code")
+                if code_outcome == "continue":
+                    try:
+                        page.wait_for_load_state("networkidle", timeout=15000)
+                    except Exception:  # noqa: BLE001
+                        pass
+                    if (pages := page.context.pages) and pages[-1] is not page:
+                        page, outcome = pages[-1], "handoff"
+                    elif (urlsplit(page.url).hostname or "") != urlsplit(args.url).hostname:
+                        outcome = "handoff"
+                    else:
+                        done, cv_attached = set(), False
+                        continue
+                if outcome == "submitted":
+                    return finish("submitted", True, form=page.url, filled=filled, left=left)
             if outcome == "next_page":
                 continue
             if outcome == "email_code" and not args.headless:
