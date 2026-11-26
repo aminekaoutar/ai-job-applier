@@ -481,6 +481,53 @@ class ApplyQueue:
                     "queued": [k for k, _, _ in self.queue], "results": dict(self.results)}
 
 
+SHOT_NAME = re.compile(r"^[A-Za-z0-9._-]{1,200}\.png$")
+# "sent" only when the site showed its confirmation page: an unconfirmed click is never counted as sent.
+APPLIED_GROUP = {"submitted": "sent", "submitted_unconfirmed": "unconfirmed", "filled": "needs_you", "needs_you": "needs_you",
+                 "login_needed": "needs_you", "blocked": "blocked", "no_form": "blocked", "easy_apply": "skipped",
+                 "skipped_linkedin": "skipped", "expired": "closed", "error": "needs_you", "cancelled": "skipped"}
+
+
+def applied_rows(profile_dir: Path) -> list[dict]:
+    """One row per job auto-apply worked on (profile/auto_apply/log.jsonl): its latest outcome, first and
+    last attempt, how many attempts, and the proof screenshot. Dry runs are tests, not applications."""
+    path = profile_dir / "auto_apply" / "log.jsonl"
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    jobs: dict[str, dict] = {}
+    for line in lines:
+        try:
+            e = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(e, dict) or e.get("status") in (None, "dry_run"):
+            continue
+        key = e.get("key") or e.get("url") or ""
+        if not key:
+            continue
+        row = jobs.get(key) or {"key": key, "first": e.get("date", ""), "attempts": 0}
+        row["attempts"] += 1
+        sent_before = row.get("group") == "sent"
+        shot = Path(str(e.get("screenshot") or "")).name
+        form = str(e.get("form") or "")
+        row.update({
+            "company": e.get("company") or row.get("company", ""), "title": e.get("title") or row.get("title", ""),
+            "url": e.get("url") or row.get("url", ""), "date": e.get("date", row.get("date", "")),
+            "status": e.get("status"), "group": APPLIED_GROUP.get(e.get("status"), "needs_you"),
+            "language": e.get("language") or row.get("language", ""),
+            "cv": Path(str(e.get("cv") or "")).name or row.get("cv", ""),
+            "site": urlsplit(form or e.get("url") or "").hostname or row.get("site", ""), "form": form,
+            "why": e.get("why", ""), "left": (e.get("left") or [])[:8],
+            "screenshot": shot if SHOT_NAME.match(shot) else row.get("screenshot", ""),
+        })
+        if sent_before and row["group"] != "sent":  # a later re-run never hides an application that went out
+            row.update(group="sent", status="submitted")
+        jobs[key] = row
+    return sorted(jobs.values(), key=lambda r: (r.get("date", ""), r.get("first", "")), reverse=True)
+
+
 def run_auto_apply(url: str, submit: bool, profile_dir: Path) -> dict:
     """One tools/auto_apply.py run; its last `RESULT {...}` line is the outcome."""
     cmd = [sys.executable, str(AUTO_APPLY), url, "--submit" if submit else "--no-submit", "--profile-dir", str(profile_dir)]
@@ -701,6 +748,15 @@ def make_handler(tracker: Path, seen: Path, token: str, port_ref: dict, lock: th
                     return self._json(HTTPStatus.NOT_FOUND, {"error": str(exc)})
             if url.path == "/api/sendlist":
                 return self._json(HTTPStatus.OK, {"rows": send_list()})
+            if url.path == "/api/applied":
+                return self._json(HTTPStatus.OK, {"rows": applied_rows(profile_dir)})
+            if url.path == "/api/shot":
+                name = str(qs.get("name", [""])[0])
+                shots = (profile_dir / "auto_apply" / "shots").resolve()
+                target = (shots / name).resolve()
+                if not SHOT_NAME.match(name) or target.parent != shots or not target.is_file():
+                    return self._json(HTTPStatus.NOT_FOUND, {"error": "no such screenshot"})
+                return self._send(HTTPStatus.OK, target.read_bytes(), "image/png")
             if url.path == "/api/sendlist.csv":
                 import csv as _csv, io as _io
                 buf = _io.StringIO()

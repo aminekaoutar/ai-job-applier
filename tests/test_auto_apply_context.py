@@ -263,6 +263,97 @@ class PageStates(unittest.TestCase):
         self.assertIn(outcome, {"submitted_unconfirmed", "submitted"})
         page.close()
 
+    def test_the_filled_forms_button_wins_over_other_forms(self):
+        # HelloWork: a job-alert form and a sticky "Postuler" form come before the application form.
+        page = self.browser.new_page()
+        page.set_content("""<form id=alert onsubmit="document.title='ALERT';return false"><input name=q>
+              <button type=submit>Postuler</button></form>
+            <form id=step onsubmit="document.title='SENT';return false">
+              <label>Prénom <input name=fn></label><label>Nom <input name=ln></label>
+              <label>Email <input type=email name=em></label></form>
+            <button type=submit form=step>Continuer ma candidature</button>""")
+        for _, f in aa.collect(page):  # marks the application form's fields with data-aa-id
+            pass
+        for sel, v in (("input[name=fn]", "A"), ("input[name=ln]", "B"), ("input[name=em]", "a@b.co")):
+            page.fill(sel, v)
+        aa.submit_step(page)
+        self.assertEqual(page.title(), "SENT")
+        page.close()
+
+    def test_logged_in_form_prefilled_names_and_this_jobs_cv_selected(self):
+        page = self.browser.new_page()
+        page.set_content("""<form id=s>
+            <label>Prénom <input name=fn required value=Amine></label>
+            <label>Nom <input name=ln required value=Kaoutar></label>
+            <label>CV <select name=cvId required><option value=old selected>finaxys-dev-python.pdf</option></select></label>
+            <label>Utiliser un nouveau CV <input type=file name=upload
+              onchange="const n = this.files[0].name; setTimeout(() => { const old = document.querySelector('select[name=cvId]');
+                const s = document.createElement('select'); s.name = 'cvId'; s.required = true;
+                s.add(new Option('finaxys-dev-python.pdf', 'old')); s.add(new Option(n, 'new'));
+                old.replaceWith(s); }, 600)"></label></form>""")
+        with tempfile.TemporaryDirectory() as d:
+            cv = Path(d) / "2026-11-01-groupe-sii-stage-ia.pdf"
+            cv.write_bytes(b"%PDF-1.4\n")
+            with mock.patch.object(aa, "claude_answers", lambda *a, **k: ({}, {})):
+                rep = aa.fill_page(page, {"basics": {"name": "Amine Kaoutar"}}, {}, cv, set(), False)
+        self.assertEqual([m for m in rep["missing"] if m[1]], [])          # prefilled names are not "missing"
+        self.assertEqual(page.eval_on_selector("select[name=cvId]", "e => e.value"), "new")  # this job's CV
+        self.assertTrue(rep["cv_attached"])
+        page.close()
+
+    def test_another_jobs_cv_never_stays_selected(self):
+        page = self.browser.new_page()
+        page.set_content("""<form><label>Prénom <input name=fn value=A></label><label>Nom <input name=ln value=B></label>
+            <label>CV <select name=cvId required><option selected>finaxys-dev-python.pdf</option></select></label></form>""")
+        with tempfile.TemporaryDirectory() as d:
+            cv = Path(d) / "groupe-sii.pdf"
+            cv.write_bytes(b"%PDF-1.4\n")
+            with mock.patch.object(aa, "claude_answers", lambda *a, **k: ({}, {})):
+                rep = aa.fill_page(page, {"basics": {}}, {}, cv, set(), False)
+        self.assertTrue(any(m[1] and "groupe-sii.pdf" in m[2] for m in rep["missing"]), rep["missing"])
+        page.close()
+
+    def test_second_step_after_continue_is_filled_not_abandoned(self):
+        # HelloWork (logged in): "Continuer ma candidature" swaps in a step asking only "Téléphone".
+        page = self.browser.new_page()
+        page.set_content("""<div id=frame><form id=s onsubmit="document.getElementById('frame').innerHTML =
+              '<form id=s2 onsubmit=&quot;document.title=\\'SENT\\';return false&quot;>' +
+              '<p>Groupe SII a besoin d\\'une information complémentaire</p>' +
+              '<label>Téléphone <input name=phone required></label><button type=submit>Postuler</button></form>';
+              return false">
+            <label>Prénom <input name=fn value=A></label><label>Nom <input name=ln value=B></label>
+            <label>Email <input type=email name=em value=a@b.co></label>
+            <button type=submit>Continuer ma candidature</button></form></div>""")
+        basics = {"name": "A B", "email": "a@b.co", "phone": "+33 7 00 00 00 00"}
+        with mock.patch.object(aa, "claude_answers", lambda *a, **k: ({}, {})):
+            done = set()
+            aa.fill_page(page, {"basics": basics}, {}, None, done, False)
+            outcome, _ = aa.submit_step(page)
+            self.assertEqual(outcome, "next_page")
+            rep = aa.fill_page(page, {"basics": basics}, {}, None, done, False)
+        self.assertIn("Téléphone", rep["filled"])  # new step's field got a fresh id, not skipped
+        self.assertEqual(page.input_value("input[name=phone]"), "+33 7 00 00 00 00")
+        aa.submit_step(page)
+        self.assertEqual(page.title(), "SENT")
+        page.close()
+
+    def test_open_autocomplete_list_does_not_eat_the_submit_click(self):
+        # HelloWork's email field opens a suggestion list; a click while it is open only closes it.
+        page = self.browser.new_page()
+        page.set_content("""<form id=s onsubmit="document.title='SENT';return false">
+            <label>Prénom <input name=fn value=A></label><label>Nom <input name=ln value=B></label>
+            <label>Email <input type=email name=em value=a@b.co
+              onfocus="document.getElementById('lb').hidden=false"></label></form>
+            <ul id=lb role=listbox hidden style="position:fixed;inset:0;background:#fff">
+              <li>a@b.co</li></ul>
+            <button type=submit form=s>Continuer ma candidature</button>
+            <script>document.addEventListener('keydown', e => { if (e.key === 'Escape')
+              document.getElementById('lb').hidden = true; });</script>""")
+        page.focus("input[name=em]")
+        aa.submit_step(page)
+        self.assertEqual(page.title(), "SENT")
+        page.close()
+
     def test_emailed_code_step_is_reported_not_claimed_as_sent(self):
         page = self.browser.new_page()
         page.set_content("""<form id=s onsubmit="document.body.innerHTML='<p>Entrez le code reçu</p><p>Pour continuer, saisissez le code envoyé à a@b.co.</p><input name=code>';return false">

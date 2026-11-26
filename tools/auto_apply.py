@@ -94,6 +94,9 @@ EMAIL_CODE = re.compile(
 EXPIRED_URL = re.compile(r"[?&]expired?=(1|true)\b", re.I)
 # The site refused the automated browser (CDN / WAF error page). Never worked around.
 BLOCKED_TITLE = re.compile(r"request could not be satisfied|^access denied|^403 forbidden|^attention required", re.I)
+# Bot-wall pages served with an ordinary title (APEC: "Access is temporarily restricted").
+BLOCKED_TEXT = re.compile(r"access is temporarily restricted|automated \(bot\) activity|unusual activity from your device|"
+                          r"accès (est )?temporairement (restreint|bloqué)|activité inhabituelle", re.I)
 LOGIN_WALL = re.compile(
     r"(cr[ée]er un compte|se connecter|connectez-vous|identifiez-vous|sign in to apply|log in to apply|"
     r"sign in|create an account|anmelden)", re.I)
@@ -121,7 +124,9 @@ COOKIE_TEXT = re.compile(
 # Collected in every frame. Each field gets data-aa-id so it can be found again.
 EXTRACT_JS = r"""
 (start) => {
-  const out = []; let n = start;
+  // Ids keep counting past every id already given, so a form's next step never reuses an earlier id.
+  const out = []; let n = Math.max(start, 0, ...[...document.querySelectorAll('[data-aa-id]')]
+    .map(e => parseInt((e.dataset.aaId || '').slice(1), 10) + 1).filter(x => !isNaN(x)));
   const vis = el => { const r = el.getBoundingClientRect(); const s = getComputedStyle(el);
     return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none'; };
   const txt = el => (el ? (el.innerText || el.textContent || '') : '').replace(/\s+/g, ' ').trim();
@@ -716,8 +721,10 @@ def leave_linkedin(page, context) -> bool:
     return False
 
 
-def collect(page) -> list[tuple[object, dict]]:
-    found, n = [], 0
+def collect(page, start: int = 0) -> list[tuple[object, dict]]:
+    """start: first id number to give - past every id already handled, so a step that replaced the
+    previous one's fields never reuses their ids."""
+    found, n = [], start
     for frame in page.frames:
         try:
             res = frame.evaluate(EXTRACT_JS, n)
@@ -770,13 +777,15 @@ def fill_one(frame, field: dict, value: str, cv: Path | None) -> bool:
 
 def fill_page(page, profile: dict, job: dict, cv: Path | None, done: set, dry: bool,
               standing: dict | None = None, context: dict | None = None) -> dict:
-    fields = collect(page)
+    used = [int(i[1:]) for i in done if re.fullmatch(r"f\d+", i)]
+    fields = collect(page, max(used) + 1 if used else 0)
     todo = [(fr, f) for fr, f in fields if f["id"] not in done]
     if dry:
         print(json.dumps([f for _, f in todo], ensure_ascii=False, indent=1))
         return {"filled": [], "missing": []}
     basics = profile.get("basics", {})
     answers, missing, ask = {}, {}, []
+    prefilled, cv_selects = set(), []
     for _, f in todo:
         if f["kind"] == "file":
             if COVER_LABEL.search(f["label"]) and not CV_LABEL.search(f["label"]):
@@ -786,8 +795,12 @@ def fill_page(page, profile: dict, job: dict, cv: Path | None, done: set, dry: b
             else:
                 missing[f["id"]] = "no tailored CV found for this job (use --cv)"
             continue
+        if f["kind"] == "select" and cv is not None and CV_LABEL.search(f["label"] or f.get("name", "")):
+            cv_selects.append(f)  # a "choose your CV" list: must end up on THIS job's CV, checked below
+            continue
         if f.get("value") and f["kind"] not in {"radio", "checkbox"}:
-            continue  # already filled (by the site or a previous pass)
+            prefilled.add(f["id"])  # already filled (by the site, e.g. a logged-in account, or a previous pass)
+            continue
         local = local_answer(f, basics)
         if local:
             answers[f["id"]] = local
@@ -806,10 +819,44 @@ def fill_page(page, profile: dict, job: dict, cv: Path | None, done: set, dry: b
             if f["kind"] == "file" and cv is not None and answers[f["id"]] == str(cv):
                 report["cv_attached"] = True
             frame.evaluate(MARK_JS, [f["id"], "#16a34a"])
-        elif f["id"] in missing or f.get("required"):
+        elif f in cv_selects:
+            continue
+        elif f["id"] in missing or (f.get("required") and f["id"] not in prefilled):
             report["missing"].append((f["label"] or f["kind"], f.get("required", False), missing.get(f["id"], "")))
             frame.evaluate(MARK_JS, [f["id"], "#f97316"])
+    if cv_selects and cv is not None:
+        # Sites that keep earlier uploads (HelloWork, logged in) preselect the LAST CV - maybe another job's.
+        quiet_network(page)  # the new upload must land in the list first
+        for frame, f in todo:
+            if f not in cv_selects:
+                continue
+            res = frame.evaluate(PICK_CV_JS, [f["id"], f.get("name", ""), cv.name])
+            if res == "ok":
+                report["filled"].append(f"{f['label'] or 'CV'} = {cv.name}")
+                report["cv_attached"] = True
+                frame.evaluate(MARK_JS, [f["id"], "#16a34a"])
+            else:
+                report["missing"].append((f["label"] or "CV", True,
+                                          f"the form's CV list does not offer {cv.name} - pick it yourself"))
+                frame.evaluate(MARK_JS, [f["id"], "#f97316"])
     return report
+
+
+# Select THIS job's CV in a "choose your CV" <select> (options are the account's uploaded files).
+PICK_CV_JS = r"""([id, field, name]) => {
+  // HelloWork swaps the <select> for a new one once an upload lands: fall back to the same field name.
+  let el = document.querySelector(`[data-aa-id="${id}"]`);
+  if (!el || !el.isConnected) el = [...document.querySelectorAll(`select[name="${CSS.escape(field || '')}"]`)]
+    .find(s => s.offsetParent) || null;
+  if (!el || el.tagName !== 'SELECT') return 'none';
+  const stem = name.replace(/\.[a-z0-9]+$/i, '').toLowerCase();
+  const o = [...el.options].find(o => (o.text || '').toLowerCase().includes(stem));
+  if (!o) return 'missing';
+  el.value = o.value;
+  el.dispatchEvent(new Event('input', {bubbles: true}));
+  el.dispatchEvent(new Event('change', {bubbles: true}));
+  return 'ok';
+}"""
 
 
 def print_report(rep: dict) -> None:
@@ -844,7 +891,7 @@ def page_state(page) -> str | None:
         title = page.title() or ""
     except Exception:  # noqa: BLE001
         title = ""
-    if BLOCKED_TITLE.search(title):
+    if BLOCKED_TITLE.search(title) or BLOCKED_TEXT.search(page_text(page)[:3000]):
         return "blocked"
     if EXPIRED_URL.search(page.url or "") or EXPIRED_TEXT.search(page_text(page)[:20000]):
         return "expired"
@@ -869,16 +916,21 @@ def form_buttons(page, pattern: re.Pattern, only_form: bool = False) -> list:
                 try:
                     if not el.is_visible() or el.is_disabled():
                         continue
-                    strict, in_form = el.evaluate(
+                    strict, in_form, owns, explicit = el.evaluate(
                         # e.form: a submit button outside the <form> but tied to it with form="..."
-                        "e => [!!(e.form || e.closest('form, [role=dialog], dialog')), "
-                        "!!(e.form || e.closest('form, [role=dialog], dialog, [class*=modal], [class*=apply], [id*=apply]'))]")
+                        """e => { const f = e.form || e.closest('form, [role=dialog], dialog');
+                          return [!!f,
+                                  !!(e.form || e.closest('form, [role=dialog], dialog, [class*=modal], [class*=apply], [id*=apply]')),
+                                  // the form auto-apply just filled (its fields carry data-aa-id)
+                                  !!(f && (f.querySelector('[data-aa-id]') ||
+                                           (f.id && document.querySelector(`[form="${CSS.escape(f.id)}"][data-aa-id]`)))),
+                                  /candidature|application/i.test(e.innerText || e.value || '')]; }""")
                 except Exception:  # noqa: BLE001
                     continue
                 if only_form and not strict:
                     continue
-                found.append((in_form, role == "button", el))
-    found.sort(key=lambda t: (t[0], t[1]), reverse=True)
+                found.append((owns, explicit, in_form, role == "button", el))
+    found.sort(key=lambda t: t[:4], reverse=True)
     return [el for *_, el in found]
 
 
@@ -903,19 +955,71 @@ def has_required_empty(page, cv_attached: bool = False) -> bool:
     return False
 
 
+def quiet_network(page, quiet_ms: int = 1500, timeout_ms: int = 20000) -> bool:
+    """Wait until no request has been in flight for quiet_ms (an upload, a validation call).
+    Unlike wait_for_load_state('networkidle'), this waits again every time it is called."""
+    inflight = set()
+    on_req = lambda r: inflight.add(r)  # noqa: E731
+    on_done = lambda r: inflight.discard(r)  # noqa: E731
+    page.on("request", on_req)
+    page.on("requestfinished", on_done)
+    page.on("requestfailed", on_done)
+    try:
+        page.wait_for_timeout(300)  # let a request triggered just before us start
+        quiet, waited = 0, 0
+        while waited < timeout_ms:
+            page.wait_for_timeout(250)
+            waited += 250
+            quiet = quiet + 250 if not inflight else 0
+            if quiet >= quiet_ms:
+                return True
+        return False
+    finally:
+        for ev, fn in (("request", on_req), ("requestfinished", on_done), ("requestfailed", on_done)):
+            try:
+                page.remove_listener(ev, fn)
+            except Exception:  # noqa: BLE001
+                pass
+
+
+def has_new_fields(page) -> bool:
+    """Visible, empty form fields auto-apply has not seen yet (no data-aa-id): a new form step."""
+    js = """() => [...document.querySelectorAll('input, select, textarea')].some(e => {
+      const t = (e.getAttribute('type') || e.tagName).toLowerCase();
+      if (['hidden', 'submit', 'button', 'search', 'reset', 'image', 'file'].includes(t)) return false;
+      if (e.dataset.aaId || e.disabled || e.readOnly || e.value) return false;
+      if (e.closest('[role=search], header, nav')) return false;
+      const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; })"""
+    for frame in page.frames:
+        try:
+            if frame.evaluate(js):
+                return True
+        except Exception:  # noqa: BLE001
+            continue
+    return False
+
+
+def close_popups(page) -> None:
+    """Close autocomplete lists / dropdowns left open by filling: Escape, then blur the focused field."""
+    try:
+        page.keyboard.press("Escape")
+        page.evaluate("() => document.activeElement && document.activeElement.blur && document.activeElement.blur()")
+        page.wait_for_timeout(400)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def submit_step(page, cv_attached: bool = False):
     """Click the form's own Submit (or Next). Returns (outcome, page):
     submitted / submitted_unconfirmed / next_page / needs_you, or handoff when the click opened the
     recruiter's site (new tab or another host) - e.g. HelloWork's "Continuer ma candidature"."""
     ctx = page.context
-    try:  # let an attached CV finish uploading before the click
-        page.wait_for_load_state("networkidle", timeout=15000)
-    except Exception:  # noqa: BLE001 - pages that poll forever never go idle
-        pass
     before = len(ctx.pages)
     host = urlsplit(page.url).hostname or ""
     sub = form_buttons(page, SUBMIT_TEXT, only_form=True)
     if sub:
+        close_popups(page)  # an open autocomplete list (HelloWork's email field) eats the first click
+        quiet_network(page)  # leaving the fields starts HelloWork's CV upload: a click before it ends is lost
         sub[0].click(timeout=5000)
         for _ in range(6):  # confirmations often come after an upload / redirect: up to ~15 s
             page.wait_for_timeout(2500)
@@ -931,6 +1035,8 @@ def submit_step(page, cv_attached: bool = False):
                 return "submitted", page
             if EMAIL_CODE.search(text):
                 return "email_code", page
+        if has_new_fields(page):
+            return "next_page", page  # the click opened the form's next step (HelloWork: "Téléphone")
         if has_required_empty(page, cv_attached):
             return "needs_you", page
         return "submitted_unconfirmed", page
