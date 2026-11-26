@@ -27,6 +27,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 CHROME_DIR = Path.home() / "Library/Application Support/Google/Chrome"
 JOB_SITES = ("hellowork.com", "welcometothejungle.com", "free-work.com", "francetravail.fr")
+# Opt-in (--with-google): your Google sign-in, so job sites' "Continue with Google" works like in your Chrome.
+GOOGLE = ("google.com", "google.fr")
 
 
 def _site_clause(sites) -> tuple[str, list]:
@@ -112,13 +114,16 @@ def main(argv=None) -> int:
     p.add_argument("--check", action="store_true", help="only count the job-site cookies, change nothing")
     p.add_argument("--chrome-profile", default="Default", help="your Chrome profile folder (default: Default)")
     p.add_argument("--browser-dir", type=Path, default=ROOT / "profile" / "browser")
+    p.add_argument("--with-google", action="store_true",
+                   help="also copy your Google sign-in, for the job sites' 'Continue with Google'")
     args = p.parse_args(argv)
+    sites = JOB_SITES + (GOOGLE if args.with_google else ())
 
     src = CHROME_DIR / args.chrome_profile / "Cookies"
     dest = args.browser_dir / "Default" / "Cookies"
     if not src.is_file():
         sys.exit(f"No Chrome cookies at {src}")
-    have = count(src)
+    have = count(src, sites)
     print("Your Chrome - cookies per job site:", have)
     if args.check:
         return 0
@@ -127,7 +132,7 @@ def main(argv=None) -> int:
                  "close the window, then retry")
     if browser_running(args.browser_dir):
         sys.exit("auto-apply's browser is open - close its window first")
-    copied = copy_cookies(src, dest)
+    copied = copy_cookies(src, dest, sites)
     print("Copied into auto-apply's browser:", copied)
     missing = [s for s, n in have.items() if not n]
     if missing:

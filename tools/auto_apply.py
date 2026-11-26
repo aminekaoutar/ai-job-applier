@@ -1155,6 +1155,18 @@ def main(argv=None) -> int:
         if state == "login_needed" or (not has_form(page) and LOGIN_WALL.search(page_text(page)[:30000])):
             return finish("login_needed", False, form=page.url,
                           why="this site needs you logged in - use 'Log in to job sites' once, then retry")
+        if EMAIL_CODE.search(page_text(page)[:30000]):
+            # An account waiting for its emailed code (HelloWork) shows the code step before any form.
+            if args.headless:
+                return finish("login_needed", True, form=page.url,
+                              why="the site asks for the code it emailed you - run without --headless "
+                                  "and type it, or log in once; not sent yet")
+            print("WAITING FOR YOU: the site emailed you a code - type it in the Chrome window (5 min).")
+            outcome, page = wait_for_code(page)
+            if outcome is None:
+                return finish("login_needed", False, form=page.url, why="no code typed within 5 minutes; not sent yet")
+            settle(page)
+            page, _ = follow_apply(page, ctx)
         if not has_form(page) or not wait_for_fields(page):
             return finish("no_form", False, form=page.url,
                           why="no application form found (login wall, email-only offer, or unusual site)")
