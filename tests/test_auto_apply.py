@@ -38,7 +38,7 @@ class LocalAnswers(unittest.TestCase):
         self.assertEqual(self.ans("Last name"), "Candidate")
         self.assertEqual(self.ans("Full name"), "Test Candidate")
         self.assertEqual(self.ans("anything", kind="email"), "t@example.com")
-        self.assertEqual(self.ans("Téléphone"), "+33 6 00 00 00 00")
+        self.assertEqual(self.ans("Téléphone"), "0600000000")
         self.assertEqual(self.ans("LinkedIn profile URL"), "https://linkedin.com/in/test")
 
     def test_unknown_or_empty_goes_to_claude(self):

@@ -332,7 +332,7 @@ class PageStates(unittest.TestCase):
             self.assertEqual(outcome, "next_page")
             rep = aa.fill_page(page, {"basics": basics}, {}, None, done, False)
         self.assertIn("Téléphone", rep["filled"])  # new step's field got a fresh id, not skipped
-        self.assertEqual(page.input_value("input[name=phone]"), "+33 7 00 00 00 00")
+        self.assertEqual(page.input_value("input[name=phone]"), "0700000000")
         aa.submit_step(page)
         self.assertEqual(page.title(), "SENT")
         page.close()
@@ -349,9 +349,20 @@ class PageStates(unittest.TestCase):
         self.assertNotEqual(page.title(), "MULTI")  # the pre-ticked "apply to these too" form is never sent
         page.close()
 
+    def test_sms_code_step_is_skipped_never_waited_on(self):
+        page = self.browser.new_page()
+        page.set_content("""<form onsubmit="document.body.innerHTML='<p>Saisissez le code envoyé par SMS au 07 59 ** ** 34</p><input name=code>';return false">
+            <label>Prénom <input name=fn value=A></label><label>Nom <input name=ln value=B></label>
+            <label>Email <input type=email name=em value=a@b.co></label><button type=submit>Postuler</button></form>""")
+        outcome, _ = aa.submit_step(page)
+        self.assertEqual(outcome, "sms_code")
+        page.close()
+
     def test_phone_format_the_field_accepts(self):
         self.assertEqual(aa.phone_variants("+33 7 59 64 00 34"),
-                         ["+33 7 59 64 00 34", "+33759640034", "0759640034", "07 59 64 00 34"])
+                         ["0759640034", "+33759640034", "07 59 64 00 34", "+33 7 59 64 00 34"])
+        self.assertEqual(aa.local_answer({"label": "Téléphone", "kind": "text", "name": ""},
+                                         {"phone": "+33 7 59 64 00 34"}), "0759640034")
         page = self.browser.new_page()
         # HelloWork-like: digits only, 10 max, error text under the field otherwise.
         page.set_content("""<form><label>Téléphone <input name=phone maxlength=10

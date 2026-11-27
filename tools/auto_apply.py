@@ -93,6 +93,9 @@ EXPIRED_TEXT = re.compile(
 EMAIL_CODE = re.compile(
     r"(saisissez le code (envoyé|reçu)|entrez le code reçu|code (de vérification|de validation) envoyé|"
     r"enter the (verification )?code (we )?sent|we('ve| have) sent (you )?a (verification )?code)", re.I)
+# A code sent by SMS cannot be read: the offer is skipped (status sms_code), the run never waits on it.
+SMS_CODE = re.compile(r"(code[^.]{0,40}(par|via) sms|sms[^.]{0,40}code|code[^.]{0,40}(envoyé|sent) (au|à votre|to your) "
+                      r"(numéro|téléphone|portable|mobile|phone)|text message with a code)", re.I)
 # Free-Work and others redirect a closed offer to their job search with ?expire=1.
 EXPIRED_URL = re.compile(r"[?&]expired?=(1|true)\b", re.I)
 # The site refused the automated browser (CDN / WAF error page). Never worked around.
@@ -505,7 +508,8 @@ def local_answer(field: dict, basics: dict) -> str | None:
     label = f"{field['label']} {field['name']}".strip()
     first, last = split_name(basics.get("name", ""))
     values = {"first": first, "last": last, "full": basics.get("name", ""),
-              "email": basics.get("email", ""), "phone": basics.get("phone", ""),
+              "email": basics.get("email", ""),
+              "phone": phone_variants(basics.get("phone", ""))[0] if basics.get("phone") else "",
               "linkedin": basics.get("linkedin", ""), "github": basics.get("github", ""),
               "website": basics.get("website", ""), "location": basics.get("location", "")}
     if field["kind"] == "email":
@@ -747,18 +751,18 @@ FIELD_ERROR = re.compile(r"pas accept|non valide|invalide|incorrect|invalid|not 
 
 
 def phone_variants(phone: str) -> list[str]:
-    """The same number in the formats forms accept: as given, +33XXXXXXXXX, 0XXXXXXXXX, 0X XX XX XX XX."""
+    """French number as forms want it: 0XXXXXXXXX first (the candidate's choice), then the other
+    formats only if a field refuses it: +33XXXXXXXXX, 0X XX XX XX XX, as given."""
     digits = re.sub(r"\D", "", phone)
-    out = [phone.strip()]
     national = None
     if digits.startswith("33") and len(digits) == 11:
         national = "0" + digits[2:]
-        out.append("+" + digits)
     elif digits.startswith("0") and len(digits) == 10:
         national = digits
-        out.append("+33" + digits[1:])
+    out = []
     if national:
-        out += [national, " ".join([national[:2]] + [national[i:i + 2] for i in range(2, 10, 2)])]
+        out += [national, "+33" + national[1:], " ".join([national[:2]] + [national[i:i + 2] for i in range(2, 10, 2)])]
+    out.append(phone.strip())
     return list(dict.fromkeys(v for v in out if v))
 
 
@@ -1080,6 +1084,8 @@ def submit_step(page, cv_attached: bool = False):
             text = page_text(page)[:30000]
             if DONE_TEXT.search(text):
                 return "submitted", page
+            if SMS_CODE.search(text):
+                return "sms_code", page
             if EMAIL_CODE.search(text):
                 return "email_code", page
         if has_new_fields(page):
@@ -1365,6 +1371,9 @@ def main(argv=None) -> int:
         if state == "login_needed" or (not has_form(page) and LOGIN_WALL.search(page_text(page)[:30000])):
             return finish("login_needed", False, form=page.url,
                           why="this site needs you logged in - use 'Log in to job sites' once, then retry")
+        if SMS_CODE.search(page_text(page)[:30000]):
+            return finish("sms_code", True, form=page.url,
+                          why="the site wants a code sent by SMS - skipped, not sent (apply by hand if you want it)")
         if EMAIL_CODE.search(page_text(page)[:30000]) and mailbox_code(page, time.time() - 900, args.profile_dir / "mailbox.json"):
             outcome, page = wait_for_code(page, timeout_s=45)
             settle(page)
@@ -1419,6 +1428,9 @@ def main(argv=None) -> int:
                               why="the site asks for a human check")
             clicked_at = time.time()
             outcome, page = submit_step(page, cv_attached)
+            if outcome == "sms_code":
+                return finish("sms_code", True, form=page.url, filled=filled, left=left,
+                              why="the site wants a code sent by SMS - skipped, not sent (apply by hand if you want it)")
             if outcome == "email_code" and mailbox_code(page, clicked_at - 30, args.profile_dir / "mailbox.json"):
                 code_outcome, page = wait_for_code(page, timeout_s=45)
                 outcome = {"submitted": "submitted", "handoff": "handoff"}.get(code_outcome or "", "email_code")
