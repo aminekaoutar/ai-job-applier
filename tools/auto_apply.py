@@ -80,7 +80,10 @@ NEXT_TEXT = re.compile(r"^\s*(suivant|continuer|étape suivante|next|continue|we
 DONE_TEXT = re.compile(
     r"(merci (pour|de) votre candidature|candidature (a bien été |a été |bien )?(envoyée|transmise|reçue|enregistrée)|"
     r"votre candidature a été|thank you for (your )?appl|application (has been |was )?(sent|submitted|received)|"
-    r"we('ve| have) received your application|vielen dank für ihre bewerbung)", re.I)
+    r"we('ve| have) received your application|vielen dank für ihre bewerbung|"
+    # HelloWork, logged in: the page after a sent application offers similar jobs, PRE-TICKED - it is the
+    # confirmation, and it is never filled or submitted (that would apply to jobs the user did not pick).
+    r"postulez directement à une ou plusieurs offres|nous transmettons votre candidature aux recruteurs)", re.I)
 EXPIRED_TEXT = re.compile(
     r"(n'est plus disponible|n’est plus disponible|offre (a expiré|expirée|pourvue|n'existe plus)|"
     r"n.accepte plus de candidatures|no longer accepting applications|this job (is )?no longer available|"
@@ -148,8 +151,12 @@ EXTRACT_JS = r"""
   const realField = e => { const t = (e.getAttribute('type') || e.tagName).toLowerCase();
     return !['hidden', 'submit', 'button', 'search', 'checkbox', 'radio', 'reset', 'image'].includes(t)
       && (t === 'file' || vis(e)); };
-  const roots = [...document.querySelectorAll('form, [role=dialog], dialog')]
-    .filter(r => [...r.querySelectorAll('input, select, textarea')].filter(realField).length >= 3);
+  const formsWith = (min) => [...document.querySelectorAll('form, [role=dialog], dialog')]
+    .filter(r => [...r.querySelectorAll('input, select, textarea')].filter(realField).length >= min);
+  // A 3+ field form is the application; failing that (a one-question step like HelloWork's "Téléphone"),
+  // any form with a real field - never the page's loose skill chips.
+  let roots = formsWith(3);
+  if (!roots.length) roots = formsWith(1);
   const inRoot = el => !roots.length || roots.some(r => r.contains(el));
   for (const el of document.querySelectorAll('input, select, textarea')) {
     if (!inRoot(el)) continue;
@@ -735,6 +742,44 @@ def collect(page, start: int = 0) -> list[tuple[object, dict]]:
     return found
 
 
+PHONE_LABEL = re.compile(r"phone|t[ée]l[ée]phone|mobile|portable|telefon", re.I)
+FIELD_ERROR = re.compile(r"pas accept|non valide|invalide|incorrect|invalid|not valid|format", re.I)
+
+
+def phone_variants(phone: str) -> list[str]:
+    """The same number in the formats forms accept: as given, +33XXXXXXXXX, 0XXXXXXXXX, 0X XX XX XX XX."""
+    digits = re.sub(r"\D", "", phone)
+    out = [phone.strip()]
+    national = None
+    if digits.startswith("33") and len(digits) == 11:
+        national = "0" + digits[2:]
+        out.append("+" + digits)
+    elif digits.startswith("0") and len(digits) == 10:
+        national = digits
+        out.append("+33" + digits[1:])
+    if national:
+        out += [national, " ".join([national[:2]] + [national[i:i + 2] for i in range(2, 10, 2)])]
+    return list(dict.fromkeys(v for v in out if v))
+
+
+def fill_phone(frame, el, value: str) -> bool:
+    """Fill a phone field, trying other formats when the site truncates it or flags it invalid
+    (HelloWork: 'Certains caractères ne sont pas acceptés' for '+' and spaces)."""
+    for v in phone_variants(value):
+        el.fill("", timeout=4000)
+        el.fill(v, timeout=4000)
+        frame.page.wait_for_timeout(500)
+        ok = el.evaluate("""(e, want) => {
+          if ((e.value || '').replace(/\\s/g, '') !== want.replace(/\\s/g, '')) return false;   // truncated / reformatted away
+          if (!e.checkValidity() || e.getAttribute('aria-invalid') === 'true') return false;
+          let box = e.parentElement; for (let i = 0; i < 2 && box && box.parentElement; i++) box = box.parentElement;
+          return !box || !/(pas accept|non valide|invalide|incorrect|invalid|not valid)/i.test(box.innerText || ''); }""", v)
+        if ok:
+            return True
+    print(f"  ! no phone format accepted for '{value}'")
+    return False
+
+
 def fill_one(frame, field: dict, value: str, cv: Path | None) -> bool:
     sel = f'[data-aa-id="{field["id"]}"]'
     kind = field["kind"]
@@ -764,6 +809,8 @@ def fill_one(frame, field: dict, value: str, cv: Path | None) -> bool:
                     hit = True
             return hit
         el = frame.locator(sel)
+        if kind == "tel" or PHONE_LABEL.search(f"{field.get('label', '')} {field.get('name', '')}"):
+            return fill_phone(frame, el, value)
         el.fill(value, timeout=4000)
         if field.get("combobox"):
             frame.page.wait_for_timeout(600)

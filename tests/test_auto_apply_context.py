@@ -337,6 +337,39 @@ class PageStates(unittest.TestCase):
         self.assertEqual(page.title(), "SENT")
         page.close()
 
+    def test_hellowork_similar_offers_page_is_the_confirmation_never_submitted(self):
+        page = self.browser.new_page()
+        page.set_content("""<form id=s onsubmit="document.body.innerHTML = '<h2>Postulez directement à une ou plusieurs offres.</h2>' +
+              '<p>Sélectionnez les offres qui vous intéressent, nous transmettons votre candidature aux recruteurs.</p>' +
+              '<form onsubmit=&quot;document.title=\\'MULTI\\';return false&quot;><input type=checkbox checked> Sopra Steria' +
+              '<input type=checkbox checked> Viveris<button type=submit>Postuler</button></form>'; return false">
+            <label>Téléphone <input name=phone value=0759640034></label><button type=submit>Postuler</button></form>""")
+        outcome, _ = aa.submit_step(page)
+        self.assertEqual(outcome, "submitted")
+        self.assertNotEqual(page.title(), "MULTI")  # the pre-ticked "apply to these too" form is never sent
+        page.close()
+
+    def test_phone_format_the_field_accepts(self):
+        self.assertEqual(aa.phone_variants("+33 7 59 64 00 34"),
+                         ["+33 7 59 64 00 34", "+33759640034", "0759640034", "07 59 64 00 34"])
+        page = self.browser.new_page()
+        # HelloWork-like: digits only, 10 max, error text under the field otherwise.
+        page.set_content("""<form><label>Téléphone <input name=phone maxlength=10
+            oninput="this.nextElementSibling.textContent = /[^0-9]/.test(this.value) ? 'Certains caractères ne sont pas acceptés.' : ''">
+            <small></small></label></form>""")
+        (frame, f), = aa.collect(page)
+        self.assertTrue(aa.fill_one(frame, f, "+33 7 59 64 00 34", None))
+        self.assertEqual(page.input_value("input[name=phone]"), "0759640034")
+        page.close()
+
+    def test_one_question_step_ignores_page_skill_chips(self):
+        page = self.browser.new_page()
+        page.set_content("""<section><label><input type=checkbox name=skill> Intelligence artificielle</label></section>
+            <form><p>Groupe SII a besoin d'une information complémentaire</p>
+              <label>Téléphone <input name=phone required></label><button>Postuler</button></form>""")
+        self.assertEqual([f["label"] for _, f in aa.collect(page)], ["Téléphone"])
+        page.close()
+
     def test_open_autocomplete_list_does_not_eat_the_submit_click(self):
         # HelloWork's email field opens a suggestion list; a click while it is open only closes it.
         page = self.browser.new_page()
