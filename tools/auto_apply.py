@@ -67,7 +67,7 @@ import profile_store as ps  # noqa: E402
 ROOT = Path(__file__).resolve().parent.parent
 
 APPLY_TEXT = re.compile(
-    r"^\s*(postuler( maintenant| à cette offre| sur le site)?|je postule|candidater|"
+    r"^\s*(postuler( maintenant| à cette offre| sur le site( de l'entreprise| du recruteur| de l'employeur)?)?|je postule|candidater|"
     r"apply( now| for this job| here| on company (site|website))?|submit (your )?application|"
     r"bewerben|jetzt bewerben|candidature)\s*$", re.I)
 EASY_APPLY = re.compile(r"easy apply|candidature simplifiée|einfach bewerben", re.I)
@@ -83,7 +83,10 @@ DONE_TEXT = re.compile(
     r"we('ve| have) received your application|vielen dank für ihre bewerbung|"
     # HelloWork, logged in: the page after a sent application offers similar jobs, PRE-TICKED - it is the
     # confirmation, and it is never filled or submitted (that would apply to jobs the user did not pick).
-    r"postulez directement à une ou plusieurs offres|nous transmettons votre candidature aux recruteurs)", re.I)
+    r"postulez directement à une ou plusieurs offres|nous transmettons votre candidature aux recruteurs|"
+    # ATS wording (Taleo / SuccessFactors / Workday...): "Thank You - Process completed", "Nous avons reçu votre CV".
+    r"process completed|processus termin|nous avons (bien )?reçu votre (cv|candidature)|"
+    r"your application (has been |was )?(successfully )?(submitted|received|completed))", re.I)
 EXPIRED_TEXT = re.compile(
     r"(n'est plus disponible|n’est plus disponible|offre (a expiré|expirée|pourvue|n'existe plus)|"
     r"n.accepte plus de candidatures|no longer accepting applications|this job (is )?no longer available|"
@@ -1301,11 +1304,32 @@ def main(argv=None) -> int:
     print(f"Mode: {'apply - submits when every required field is answered' if submit else 'fill only - you click Submit'}")
     interactive = sys.stdin.isatty()
 
+    started = time.time()
+    reached_form = {"yes": False}  # set once a form was filled: only then can an email confirm a submission
+
+    def site_of(url: str) -> str:
+        host = (urlsplit(url).hostname or "").lower()
+        return ".".join(host.split(".")[-2:]) if host and "hellowork" not in host else ""
+
     with sync_playwright() as pw:
         ctx = open_browser(pw, browser_dir, args.headless)
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
 
         def finish(status: str, close: bool, **extra) -> int:
+            if submit and status in {"submitted_unconfirmed", "needs_you"} and reached_form["yes"]:
+                # The page did not say it clearly; the employer's "we received your application" email does.
+                try:
+                    import job_mailbox
+                    names = [base.get("company", ""), *{site_of(u) for u in (args.url, page.url) if u}]
+                    for _ in range(4):
+                        subject = job_mailbox.confirmation(names, started, args.profile_dir / "mailbox.json")
+                        if subject:
+                            status, close = "submitted", True
+                            extra["why"] = f"confirmed by email: {subject[:150]}"
+                            break
+                        time.sleep(15)
+                except Exception as exc:  # noqa: BLE001 - the mailbox is a bonus check, never a blocker
+                    print(f"  ! mailbox check failed: {str(exc)[:100]}")
             if status in {"submitted", "submitted_unconfirmed", "needs_you"}:
                 try:  # proof of what the page showed at the end, kept with the application log
                     shots = args.profile_dir / "auto_apply" / "shots"
@@ -1365,6 +1389,34 @@ def main(argv=None) -> int:
         print(f"GitHub projects in context: {len(github)}")
         base.update(cv=str(cv or ""), language=language)
         context = {"language": language, "posting": posting, "cv": cv_facts(cv_json), "github": github}
+
+        def ai(pg, goal: str, reach_form: bool, steps: int = 30):
+            """Stuck: let Claude pick the next action, step by step (tools/llm_navigator.py)."""
+            import llm_navigator
+
+            def blocked(p):
+                text = page_text(p)[:30000]
+                if has_captcha(p):
+                    return "the site asks for a human check (CAPTCHA)"
+                if SMS_CODE.search(text):
+                    return "the site wants a code sent by SMS"
+                return {"blocked": "the site refused the automated browser", "expired": "the offer is closed"}.get(
+                    page_state(p) or "")
+            print(f"  asking Claude to {'reach the form' if reach_form else 'finish the application'}...")
+            return llm_navigator.navigate(
+                pg, goal, {**(job or {"title": base.get("title"), "company": base.get("company")}),
+                           "portal": job.get("portal") or (urlsplit(args.url).hostname or "").replace("www.", "")},
+                profile, standing,
+                cv, language, max_steps=steps,
+                is_done=lambda p: bool(DONE_TEXT.search(page_text(p)[:30000])), is_blocked=blocked,
+                reached=(lambda p: has_form(p) and bool(collect(p))) if reach_form else None,
+                mailbox_code=lambda p, since: mailbox_code(p, since, args.profile_dir / "mailbox.json"),
+                fill_phone=fill_phone)
+
+        GOAL_FORM = ("Get to this job's application form: accept or close cookie banners, click Apply / Postuler / "
+                     "'Postuler sur le site', choose to apply with a CV, create the account or log in if required.")
+        GOAL_FINISH = ("Complete and submit this application: fill every required field truthfully, upload the CV, "
+                       "go through each step and click the final Submit / Envoyer / Postuler.")
         state = state or page_state(page)
         if state == "expired":
             return finish("expired", True, form=page.url, why="the offer is no longer open")
@@ -1391,13 +1443,22 @@ def main(argv=None) -> int:
             settle(page)
             page, _ = follow_apply(page, ctx)
         if not has_form(page) or not wait_for_fields(page):
-            return finish("no_form", False, form=page.url,
-                          why="no application form found (login wall, email-only offer, or unusual site)")
+            if not submit:
+                return finish("no_form", False, form=page.url,
+                              why="no application form found (login wall, email-only offer, or unusual site)")
+            status, page, reason = ai(page, GOAL_FORM, reach_form=True, steps=14)
+            if status == "submitted":
+                return finish("submitted", True, form=page.url, why=f"via AI steps: {reason}")
+            if status != "reached":
+                return finish("blocked" if status == "blocked" else "no_form", True, form=page.url,
+                              why=f"no application form found; AI: {reason}")
 
         done: set = set()
         filled, left, required_left, cv_attached = 0, [], 0, False
+        last_sig = None
         for _step in range(8):
             rep = fill_page(page, profile, job, cv, done, args.dry_run, standing, context)
+            reached_form["yes"] = reached_form["yes"] or bool(rep.get("filled"))
             if args.dry_run:
                 return finish("dry_run", True, form=page.url)
             print_report(rep)
@@ -1420,8 +1481,11 @@ def main(argv=None) -> int:
                 return finish("filled", False, form=page.url, filled=filled, required_left=required_left, left=left)
             cv_attached = cv_attached or rep.get("cv_attached", False)
             if req or has_required_empty(page, cv_attached):
-                return finish("needs_you", False, form=page.url, filled=filled,
-                              required_left=max(required_left, 1), left=left)
+                status, page, reason = ai(page, GOAL_FINISH, reach_form=False)
+                if status == "submitted":
+                    return finish("submitted", True, form=page.url, filled=filled, why=f"via AI steps: {reason}")
+                return finish("blocked" if status == "blocked" else "needs_you", status == "blocked", form=page.url,
+                              filled=filled, required_left=max(required_left, 1), left=left, why=f"AI: {reason}")
             if has_captcha(page):
                 return finish("needs_you", False, form=page.url, filled=filled,
                               left=left + ["CAPTCHA - solve it in Chrome, then click Submit"],
@@ -1449,6 +1513,14 @@ def main(argv=None) -> int:
                 if outcome == "submitted":
                     return finish("submitted", True, form=page.url, filled=filled, left=left)
             if outcome == "next_page":
+                sig = (page.url, re.sub(r"\s+", " ", page_text(page))[:3000])
+                if sig == last_sig:  # "Next" did nothing (a validation error the filler cannot see): ask the AI
+                    status, page, reason = ai(page, GOAL_FINISH, reach_form=False)
+                    if status == "submitted":
+                        return finish("submitted", True, form=page.url, filled=filled, why=f"via AI steps: {reason}")
+                    return finish("blocked" if status == "blocked" else "needs_you", status == "blocked",
+                                  form=page.url, filled=filled, left=left[-8:], why=f"AI: {reason}")
+                last_sig = sig
                 continue
             if outcome == "email_code" and not args.headless:
                 print("WAITING FOR YOU: the site emailed you a code - type it in the Chrome window (5 min).")
@@ -1487,14 +1559,29 @@ def main(argv=None) -> int:
                     return finish(state, True, form=page.url, filled=filled, left=left,
                                   why=f"recruiter's site: {state}")
                 if LOGIN_URL.search(urlsplit(page.url).path) or not (has_form(page) and wait_for_fields(page)):
-                    return finish("needs_you", False, form=page.url, filled=filled,
-                                  left=left + ["finish the application on the recruiter's site"],
-                                  why="handed over to the recruiter's site, which shows no form to fill "
-                                      "(login, email-only or unusual page)")
+                    status, page, reason = ai(page, GOAL_FORM, reach_form=True, steps=14)
+                    if status == "submitted":
+                        return finish("submitted", True, form=page.url, filled=filled, why=f"via AI steps: {reason}")
+                    if status != "reached":
+                        return finish("blocked" if status == "blocked" else "needs_you", True, form=page.url,
+                                      filled=filled, left=left + ["finish the application on the recruiter's site"],
+                                      why=f"recruiter's site: {reason}")
                 done, cv_attached = set(), False
                 continue
+            if outcome == "needs_you":  # no Submit button it knows, or required fields left after the click
+                status, page, reason = ai(page, GOAL_FINISH, reach_form=False)
+                if status == "submitted":
+                    return finish("submitted", True, form=page.url, filled=filled, why=f"via AI steps: {reason}")
+                return finish("blocked" if status == "blocked" else "needs_you", status == "blocked", form=page.url,
+                              filled=filled, left=left, why=f"AI: {reason}")
             return finish(outcome, outcome == "submitted", form=page.url, filled=filled, left=left)
-        return finish("needs_you", False, form=page.url, filled=filled, left=left, why="more than 8 form pages")
+        if submit:
+            status, page, reason = ai(page, GOAL_FINISH, reach_form=False)
+            if status == "submitted":
+                return finish("submitted", True, form=page.url, filled=filled, why=f"via AI steps: {reason}")
+            return finish("blocked" if status == "blocked" else "needs_you", status == "blocked", form=page.url,
+                          filled=filled, left=left[-8:], why=f"AI after 8 form pages: {reason}")
+        return finish("needs_you", False, form=page.url, filled=filled, left=left[-8:], why="more than 8 form pages")
 
 
 if __name__ == "__main__":

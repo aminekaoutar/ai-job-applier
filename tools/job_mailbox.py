@@ -156,6 +156,55 @@ def latest_code(site: str, since: float, timeout_s: int = 120, poll_s: int = 5,
         time.sleep(poll_s)
 
 
+RECEIVED = re.compile(r"(avons (bien )?reçu|bien reçu|est arrivée chez|candidature (a bien été |a été )?"
+                      r"(reçue|enregistrée|transmise)|merci (pour|de) votre (candidature|intérêt|motivation)|"
+                      r"thank you for (applying|your application|your interest)|received your application|"
+                      r"application (has been |was )?(received|submitted))", re.I)
+NOT_DONE = re.compile(r"finalis|complete your application|terminez|n'est pas (encore )?termin|still need", re.I)
+
+
+def confirmation(names: list[str], since: float, config_path: Path = CONFIG, imap_factory=imaplib.IMAP4_SSL) -> str | None:
+    """The subject of an email received after `since` that confirms an application to one of `names`
+    (company name or site domain), e.g. 'Nous avons reçu votre CV pour le poste de ...'. None otherwise.
+    A 'finalise your application' reminder is not a confirmation."""
+    cfg = load_config(config_path)
+    pwd = _password(cfg["address"]) if cfg else None
+    if not cfg or not pwd:
+        return None
+    keys = [n.lower() for n in names if n and len(n) >= 3]
+    box = imap_factory(cfg.get("imap_host") or "imap.gmail.com")
+    try:
+        box.login(cfg["address"], pwd)
+        box.select("INBOX", readonly=True)
+        day = time.strftime("%d-%b-%Y", time.gmtime(since - 86400))
+        _, ids = box.search(None, f'(SINCE "{day}")')
+        for mid in reversed((ids[0] or b"").split()[-40:]):
+            _, data = box.fetch(mid, "(RFC822)")
+            raw = next((d[1] for d in data if isinstance(d, tuple)), None)
+            if not raw:
+                continue
+            msg = email.message_from_bytes(raw)
+            try:
+                dt = parsedate_to_datetime(msg.get("Date"))
+                dt = dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+                if dt.timestamp() < since - 120:
+                    continue
+            except (TypeError, ValueError):
+                continue
+            subject = str(make_header(decode_header(msg.get("Subject", ""))))
+            text = f"{subject} {msg.get('From', '')} {_text_of(msg)[:3000]}"
+            if any(k in text.lower() for k in keys) and RECEIVED.search(text) and not NOT_DONE.search(subject):
+                return subject
+    except (imaplib.IMAP4.error, OSError):
+        return None
+    finally:
+        try:
+            box.logout()
+        except Exception:  # noqa: BLE001
+            pass
+    return None
+
+
 def setup() -> int:
     print("Job mailbox setup - the app password is stored in the macOS Keychain, nowhere else.")
     addr = input("Job-search email address: ").strip()

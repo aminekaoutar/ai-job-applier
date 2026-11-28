@@ -79,6 +79,34 @@ class LatestCode(unittest.TestCase):
             self.assertIsNone(jm.latest_code("hellowork.com", time.time(), config_path=Path(d) / "none.json"))
 
 
+class Confirmation(unittest.TestCase):
+    def check(self, messages, names, since):
+        with tempfile.TemporaryDirectory() as d:
+            cfg = Path(d) / "mailbox.json"
+            cfg.write_text(json.dumps({"address": "jobs@example.com", "imap_host": "imap.example.com"}))
+            with mock.patch.dict(jm.os.environ, {"JOB_MAILBOX_PASSWORD": "app-pass"}):
+                return jm.confirmation(names, since, config_path=cfg, imap_factory=FakeIMAP(messages))
+
+    def test_employer_receipt_counts(self):
+        now = time.time()
+        msgs = [mail("3DS Talent Acquisition <ta-3DS@3ds.com>",
+                     "3DS Recrutement - Nous avons reçu votre CV pour le poste de Développeur Python Cloud",
+                     "Votre candidature au poste est étudiée avec attention.", now + 30)]
+        self.assertIn("Nous avons reçu votre CV", self.check(msgs, ["3DS Outscale", "3ds.com"], now))
+
+    def test_finalise_reminder_and_old_mail_do_not(self):
+        now = time.time()
+        msgs = [mail("Hellowork <contact@emails.hellowork.com>", "Finalisez votre candidature sur le site de 3DS Outscale",
+                     "Merci pour votre candidature, finalisez-la sur le site du recruteur.", now + 30),
+                mail("ta-3DS@3ds.com", "Nous avons reçu votre CV", "merci", now - 7200)]
+        self.assertIsNone(self.check(msgs, ["3DS Outscale", "3ds.com"], now))
+
+    def test_other_company_does_not(self):
+        now = time.time()
+        msgs = [mail("jobs@acme.io", "Nous avons reçu votre candidature", "Acme vous remercie", now + 10)]
+        self.assertIsNone(self.check(msgs, ["3DS Outscale", "3ds.com"], now))
+
+
 class TypeCode(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
