@@ -29,8 +29,9 @@ def scripted(steps):
         calls.append(prompt)
         want = steps[len(calls) - 1]
         if want.get("match"):
-            elements = nav.json.loads(prompt.split("<elements>\n")[1].split("\n</elements>")[0])
-            hit = next(e for e in elements if want["match"] in (e.get("text", "") + " " + e.get("label", "")))
+            block = prompt.split("<elements>\n")[1].split("\n</elements>")[0]
+            elements = [nav.json.loads(line) for line in block.splitlines() if line.strip()]
+            hit = next(e for e in elements if want["match"] in (e.get("x", "") + " " + e.get("l", "")))
             want = {**want, "target": hit["id"]}
         return {k: v for k, v in want.items() if k != "match"}
     return fake, calls
@@ -55,7 +56,8 @@ class Navigate(unittest.TestCase):
         page = self.browser.new_page()
         page.set_content(html)
         fake, calls = scripted(steps)
-        with mock.patch.object(nav.ps, "run_claude", side_effect=fake):
+        with mock.patch.dict(nav.os.environ, {"NAV_LLM": "claude"}), \
+                mock.patch.object(nav.ps, "run_claude", side_effect=fake):
             out = nav.navigate(page, "goal", JOB, PROFILE, {"consent": True}, None, "French", log=lambda *_: None,
                                is_done=lambda p: bool(aa.DONE_TEXT.search(aa.page_text(p))), **kw)
         return out, page, calls
@@ -118,6 +120,56 @@ class Navigate(unittest.TestCase):
         self.assertFalse(any("hunter2" in str(i) for i in items))
         self.assertEqual(len([i for i in items if i["tag"] == "input"]), 1)
         page.close()
+
+
+class Provider(unittest.TestCase):
+    def test_groq_when_a_key_exists_unless_forced(self):
+        import groq_llm
+        with mock.patch.dict(nav.os.environ, {"NAV_LLM": ""}), mock.patch.object(groq_llm, "available", return_value=True):
+            self.assertEqual(nav.provider(), "groq")
+        with mock.patch.dict(nav.os.environ, {"NAV_LLM": ""}), mock.patch.object(groq_llm, "available", return_value=False):
+            self.assertEqual(nav.provider(), "claude")
+        with mock.patch.dict(nav.os.environ, {"NAV_LLM": "claude"}):
+            self.assertEqual(nav.provider(), "claude")
+
+    def test_groq_failure_falls_back_to_claude_for_that_step(self):
+        import groq_llm
+        with mock.patch.dict(nav.os.environ, {"NAV_LLM": "groq"}), \
+                mock.patch.object(groq_llm, "chat_json", side_effect=groq_llm.GroqError("429")), \
+                mock.patch.object(nav.ps, "run_claude", return_value={"action": "wait", "reason": "r"}) as claude:
+            self.assertEqual(nav.ask_step("p", log=lambda *_: None)["action"], "wait")
+        claude.assert_called_once()
+
+
+class GroqCalls(unittest.TestCase):
+    def reply(self, content):
+        return {"model": "openai/gpt-oss-120b", "choices": [{"message": {"content": content}}],
+                "usage": {"prompt_tokens": 1200, "completion_tokens": 30}}
+
+    def test_json_parsed_and_sent_with_json_mode(self):
+        import groq_llm
+        with mock.patch.object(groq_llm, "api_key", return_value="gsk_test"), \
+                mock.patch.object(groq_llm, "_post",
+                                  return_value=self.reply('{"action": "click", "target": "0:e3", "reason": "go"}')) as post:
+            out = groq_llm.chat_json("prompt", nav.STEP_SCHEMA)
+        self.assertEqual(out["target"], "0:e3")
+        body = post.call_args[0][1]
+        self.assertEqual(body["response_format"], {"type": "json_object"})
+        self.assertEqual(body["temperature"], 0)
+
+    def test_bad_json_is_retried_then_errors(self):
+        import groq_llm
+        with mock.patch.object(groq_llm, "api_key", return_value="gsk_test"), \
+                mock.patch.object(groq_llm, "_post", return_value=self.reply("not json")) as post:
+            with self.assertRaises(groq_llm.GroqError):
+                groq_llm.chat_json("prompt", nav.STEP_SCHEMA)
+        self.assertEqual(post.call_count, 2)
+
+    def test_no_key_is_an_error_not_a_crash(self):
+        import groq_llm
+        with mock.patch.object(groq_llm, "api_key", return_value=None):
+            with self.assertRaises(groq_llm.GroqError):
+                groq_llm._call("p", {}, 5, "m")
 
 
 class SitePassword(unittest.TestCase):

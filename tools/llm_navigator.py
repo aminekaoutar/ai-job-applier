@@ -23,6 +23,7 @@ Guardrails (in the prompt AND enforced here):
 from __future__ import annotations
 
 import json
+import os
 import re
 import secrets
 import string
@@ -118,7 +119,8 @@ Rules:
   without its leading 0 when the form splits country code and number). Email: {email}.
 - "How did you hear about us?" / source: the offer was found on {source}; pick that option if offered,
   else the closest (job board / website).
-- One action per step. target = the element id from <elements>. value = text to type or option to pick.
+- One action per step. target = the element "id" from <elements> (one JSON per line; t=tag:type, x=text, l=label,
+  req=required, filled=already filled, opts=options). value = text to type or option to pick.
 - Do not click a button you already clicked in the last steps unless the page changed.
 - Use "done" only when the page clearly says the application was sent / received / submitted.
 
@@ -204,6 +206,49 @@ def snapshot(page) -> list[dict]:
     return out[:220]
 
 
+def compact_elements(items: list[dict], limit: int = 90) -> str:
+    """The elements as short JSON lines, form controls and buttons first, links last: a few thousand
+    tokens at most (Groq's free tier allows 8k tokens a minute)."""
+    def rank(e):
+        if e["tag"] in ("input", "select", "textarea") or e.get("role") in ("combobox", "checkbox", "radio"):
+            return 0
+        return 1 if e["tag"] == "button" or e.get("role") == "button" else 2
+    keep = sorted(items, key=rank)[:limit]
+    rows = []
+    for e in keep:
+        row = {"id": e["id"], "t": e["tag"] + (f":{e['type']}" if e.get("type") else "")}
+        if e.get("text"):
+            row["x"] = e["text"][:60]
+        if e.get("label"):
+            row["l"] = e["label"][:60]
+        if e.get("required"):
+            row["req"] = 1
+        if "filled" in e:
+            row["filled"] = int(bool(e["filled"]))
+        if e.get("options"):
+            row["opts"] = [o[:30] for o in e["options"][:12]]
+        if e.get("href") and not e["href"].startswith(("#", "javascript")):
+            row["href"] = e["href"][:60]
+        rows.append(json.dumps(row, ensure_ascii=False, separators=(",", ":")))
+    return "\n".join(rows)
+
+
+def compact_candidate(profile: dict) -> dict:
+    """What navigation needs: identity, contact, skills, languages, job titles and dates, degrees.
+    (Free-text answers are written by auto_apply's form filler, which gets the full profile.)"""
+    b = dict(profile.get("basics") or {})
+    b.pop("photo", None)
+    b.pop("summary", None)
+    return {
+        "basics": b,
+        "skills": (profile.get("skills") or [])[:30],
+        "languages": profile.get("languages") or [],
+        "experience": [{k: e.get(k) for k in ("title", "company", "start", "end", "location")}
+                       for e in profile.get("experience") or []],
+        "education": [{k: e.get(k) for k in ("degree", "school", "start", "end")} for e in profile.get("education") or []],
+    }
+
+
 def _locate(page, target: str):
     try:
         fi, aid = target.split(":", 1)
@@ -273,6 +318,31 @@ def act(page, step: dict, cv: Path | None, mailbox_code=None, fill_phone=None):
     return page, f"{action} {target}"
 
 
+# --- which model picks the steps -------------------------------------------------------
+
+def provider() -> str:
+    """NAV_LLM=groq|claude forces one; otherwise Groq when a Groq key is set up (much cheaper per step)."""
+    forced = os.environ.get("NAV_LLM", "").strip().lower()
+    if forced in ("groq", "claude"):
+        return forced
+    try:
+        import groq_llm
+        return "groq" if groq_llm.available() else "claude"
+    except ImportError:
+        return "claude"
+
+
+def ask_step(prompt: str, log=print) -> dict:
+    """One step from Groq (falls back to Claude for this step if Groq fails) or Claude."""
+    if provider() == "groq":
+        import groq_llm
+        try:
+            return groq_llm.chat_json(prompt, STEP_SCHEMA, timeout=90, task="navigate_groq")
+        except groq_llm.GroqError as exc:
+            log(f"  ! Groq failed ({str(exc)[:80]}) - asking Claude for this step")
+    return ps.run_claude(prompt, STEP_SCHEMA, timeout=180, task="navigate")
+
+
 # --- the loop --------------------------------------------------------------------------
 
 def navigate(page, goal: str, job: dict, profile: dict, standing: dict, cv: Path | None, language: str,
@@ -297,7 +367,7 @@ def navigate(page, goal: str, job: dict, profile: dict, standing: dict, cv: Path
             return "reached", page, "goal reached"
         elements = snapshot(page)
         try:
-            text = re.sub(r"\s+", " ", page.evaluate("() => document.body ? document.body.innerText : ''"))[:3000]
+            text = re.sub(r"\s+", " ", page.evaluate("() => document.body ? document.body.innerText : ''"))[:1500]
         except Exception:  # noqa: BLE001
             text = ""
         prompt = PROMPT.format(
@@ -311,15 +381,18 @@ def navigate(page, goal: str, job: dict, profile: dict, standing: dict, cv: Path
                           "for later runs)."),
             source=job.get("portal") or "a job board",
             url=page.url[:200], title=(page.title() or "")[:120], page_text=text,
-            elements=json.dumps(elements, ensure_ascii=False), history="\n".join(history[-10:]) or "(nothing yet)",
-            candidate=json.dumps(candidate, ensure_ascii=False)[:9000],
+            elements=compact_elements(elements), history="\n".join(history[-8:]) or "(nothing yet)",
+            candidate=json.dumps(compact_candidate(candidate), ensure_ascii=False)[:2500],
             standing=json.dumps({k: v for k, v in standing.items() if str(v).strip() and k not in ("auto_submit",)},
                                 ensure_ascii=False))
         try:
-            step = ps.run_claude(prompt, STEP_SCHEMA, timeout=180, task="navigate")
-        except ps.ClaudeError as exc:
-            return "give_up", page, f"Claude unavailable: {exc}"
+            step = ask_step(prompt, log)
+        except (ps.ClaudeError, RuntimeError) as exc:
+            return "give_up", page, f"AI unavailable: {exc}"
         action = step.get("action")
+        if action not in ACTIONS:
+            history.append(f"{n}. invalid action {action!r} - use one of {', '.join(ACTIONS)}")
+            continue
         log(f"  [ai step {n}] {action} {step.get('target', '')} {('= ' + step['value'][:40]) if step.get('value') and action != 'fill_password' else ''}"
             f" - {step.get('reason', '')[:90]}")
         if action == "give_up":

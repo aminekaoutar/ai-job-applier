@@ -358,6 +358,18 @@ class PageStates(unittest.TestCase):
         self.assertEqual(outcome, "sms_code")
         page.close()
 
+    def test_required_errors_after_submit_mean_not_sent(self):
+        # Flatchr (Sqorus): custom dropdowns left empty, the click shows "Cette question est obligatoire".
+        page = self.browser.new_page()
+        page.set_content("""<form id=s onsubmit="document.getElementById('err').textContent='Cette question est obligatoire';return false">
+            <label>Prénom <input name=fn value=A></label><label>Nom <input name=ln value=B></label>
+            <label>Email <input type=email name=em value=a@b.co></label>
+            <div>Autorisation de travail ? <div class=fake-select>Choisir une réponse</div><p id=err></p></div>
+            <button type=submit>Postuler</button></form>""")
+        outcome, _ = aa.submit_step(page)
+        self.assertEqual(outcome, "needs_you")
+        page.close()
+
     def test_phone_format_the_field_accepts(self):
         self.assertEqual(aa.phone_variants("+33 7 59 64 00 34"),
                          ["0759640034", "+33759640034", "07 59 64 00 34", "+33 7 59 64 00 34"])

@@ -96,6 +96,10 @@ EXPIRED_TEXT = re.compile(
 EMAIL_CODE = re.compile(
     r"(saisissez le code (envoyé|reçu)|entrez le code reçu|code (de vérification|de validation) envoyé|"
     r"enter the (verification )?code (we )?sent|we('ve| have) sent (you )?a (verification )?code)", re.I)
+# Validation errors a site shows when the submit was refused: never "unconfirmed", always "not sent".
+REQUIRED_ERROR = re.compile(r"(cette question est obligatoire|ce champ est (obligatoire|requis)|champ obligatoire|"
+                            r"veuillez (remplir|renseigner|répondre)|this (field|question) is required|"
+                            r"please (fill|complete|answer) (in )?(this|all|the required)|is required\b)", re.I)
 # A code sent by SMS cannot be read: the offer is skipped (status sms_code), the run never waits on it.
 SMS_CODE = re.compile(r"(code[^.]{0,40}(par|via) sms|sms[^.]{0,40}code|code[^.]{0,40}(envoyé|sent) (au|à votre|to your) "
                       r"(numéro|téléphone|portable|mobile|phone)|text message with a code)", re.I)
@@ -1091,6 +1095,8 @@ def submit_step(page, cv_attached: bool = False):
                 return "sms_code", page
             if EMAIL_CODE.search(text):
                 return "email_code", page
+        if REQUIRED_ERROR.search(page_text(page)[:30000]):
+            return "needs_you", page  # the site refused the submit: required answers missing (custom dropdowns...)
         if has_new_fields(page):
             return "next_page", page  # the click opened the form's next step (HelloWork: "Téléphone")
         if has_required_empty(page, cv_attached):
