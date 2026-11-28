@@ -420,6 +420,16 @@ details summary { cursor: pointer; }
       </section>
 
       <section id="tab-applied" class="hidden">
+        <div class="panel" style="margin-bottom:16px">
+          <div class="toolbar" style="margin:0;align-items:center;flex-wrap:wrap">
+            <label style="display:flex;align-items:center;gap:8px;font-weight:600">Apply to
+              <input id="applyn-n" type="number" min="1" max="50" value="10" style="width:76px" aria-label="Number of jobs">
+              jobs</label>
+            <button class="btn accent" id="applyn-start"><svg class="i"><use href="#i-send"/></svg> Start</button>
+            <button class="btn hidden" id="applyn-stop">Stop</button>
+            <span class="muted" id="applyn-status" style="font-size:13px">Best matches first, one at a time, until that many are sent. Offers already tried, unwanted contracts and sites that block robots are skipped.</span>
+          </div>
+        </div>
         <div class="cards" id="applied-cards" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr))"></div>
         <div class="panel">
           <div class="toolbar">
@@ -991,6 +1001,37 @@ function renderApplied() {
 ["#aq", "#af-group"].forEach(s => $(s).addEventListener("input", renderApplied));
 $("#applied-refresh").addEventListener("click", loadApplied);
 loadApplied();
+
+// ---------- Apply to N jobs (tools/apply_batch.py) ----------
+async function pollApplyN() {
+  let s;
+  try { s = await (await fetch("/api/apply/batch")).json(); } catch { return; }
+  const b = s.batch;
+  $("#applyn-stop").classList.toggle("hidden", !(b && b.running));
+  $("#applyn-start").disabled = !!(b && b.running);
+  if (b && b.running) {
+    const cur = b.current ? ` · now: <b>${esc(b.current.company)}</b> - ${esc(b.current.title)}` : "";
+    $("#applyn-status").innerHTML = `<span class="busy">${b.sent}/${b.target} sent</span> · ${b.tried} tried${cur}`;
+    loadApplied();
+    setTimeout(pollApplyN, 4000);
+  } else if (b) {
+    $("#applyn-status").textContent = `${b.stopped ? "Stopped" : "Finished"}: ${b.sent} of ${b.target} sent (${b.tried} offers tried). ${s.available} offers left to try.`;
+    loadApplied();
+  } else {
+    $("#applyn-status").textContent = `${s.available} offers can be tried now - best matches first, until that many are sent.`;
+  }
+}
+$("#applyn-start").addEventListener("click", async () => {
+  const n = parseInt($("#applyn-n").value, 10);
+  if (!(n >= 1 && n <= 50)) { toast("Pick between 1 and 50 jobs"); return; }
+  if (!confirm(`Send ${n} application(s) now? Each is submitted for real, in your name.`)) return;
+  try { await api("/api/apply/batch", { count: n }); toast(`Applying to ${n} job(s)…`); pollApplyN(); }
+  catch (e) { toast(e.message || String(e)); }
+});
+$("#applyn-stop").addEventListener("click", async () => {
+  await api("/api/apply/batch/stop", {}); toast("Stopping after the current offer"); pollApplyN();
+});
+pollApplyN();
 
 ["#q", "#f-response", "#f-status", "#f-portal", "#f-open"].forEach(s => $(s).addEventListener("input", renderApps));
 $("#of-portal").addEventListener("input", () => store("tracker.of-portal", $("#of-portal").value));

@@ -553,14 +553,19 @@ def make_handler(tracker: Path, seen: Path, token: str, port_ref: dict, lock: th
     search_job = SearchJob()
     batch_job = SearchJob()
 
-    def apply_one(key: str, url: str, submit: bool) -> dict:
-        res = run_auto_apply(url, submit, profile_dir)
+    def apply_one(key: str, url: str, submit: bool, res: dict | None = None) -> dict:
+        """Run auto_apply (unless `res` is given) and record the outcome on the job and in the tracker."""
+        if res is None:
+            res = run_auto_apply(url, submit, profile_dir)
         status = res.get("status", "error")
         record = load_outreach(key)
         record["auto_apply"] = {"status": status, "on": date.today().isoformat(), "why": res.get("why", ""),
                                 "form": res.get("form", ""), "left": (res.get("left") or [])[:12]}
         if status in APPLIED_STATUSES and not record.get("sent"):
-            opp = find_opportunity(key)
+            try:
+                opp = find_opportunity(key)
+            except ValueError:  # no longer in the opportunities list: the job record has what is needed
+                opp = {"company": record.get("company", ""), "title": record.get("title", ""), "url": url}
             with lock:
                 version = read_tracker(tracker)[2]
                 apply_edit(tracker, version, "add", {
@@ -575,6 +580,21 @@ def make_handler(tracker: Path, seen: Path, token: str, port_ref: dict, lock: th
         return record["auto_apply"]
 
     apply_queue = ApplyQueue(apply_one)
+    n_batch = {"job": None}  # the running "Apply to N jobs" (tools/apply_batch.py), if any
+
+    def start_n_batch(count: int) -> dict:
+        import apply_batch
+        if in_docker():
+            raise ValueError("Applying needs Chrome on your Mac - run the tracker there: python3 tools/tracker_app.py")
+        if apply_queue.busy() or (n_batch["job"] and n_batch["job"].status()["running"]):
+            raise ValueError("Applications are already running - wait for them or press Stop")
+        if not 1 <= count <= 50:
+            raise ValueError("Pick between 1 and 50 jobs")
+        job = apply_batch.Batch(count, profile_dir,
+                                runner=lambda j: apply_one(j["key"], j["url"], True, apply_batch.run_one(j["url"])))
+        n_batch["job"] = job
+        threading.Thread(target=job.run, kwargs={"log": lambda *_: None}, daemon=True).start()
+        return job.status()
     profile_lock = threading.Lock()
     github_cache = {}  # username -> repos fetched by /api/github/repos
 
@@ -716,6 +736,11 @@ def make_handler(tracker: Path, seen: Path, token: str, port_ref: dict, lock: th
                 return self._json(HTTPStatus.OK, batch_job.status())
             if url.path == "/api/apply/status":
                 return self._json(HTTPStatus.OK, apply_queue.status())
+            if url.path == "/api/apply/batch":
+                import apply_batch
+                job = n_batch["job"]
+                return self._json(HTTPStatus.OK, {"batch": job.status() if job else None,
+                                                  "available": len(apply_batch.candidates(profile_dir))})
             if url.path == "/api/apply/answers":
                 return self._json(HTTPStatus.OK, {"answers": aa.load_answers(profile_dir), "keys": aa.ANSWER_KEYS,
                                                   "exists": (profile_dir / "answers.json").is_file()})
@@ -919,6 +944,12 @@ def make_handler(tracker: Path, seen: Path, token: str, port_ref: dict, lock: th
             if path == "/api/apply/stop":
                 apply_queue.stop()
                 return self._json(HTTPStatus.OK, apply_queue.status())
+            if path == "/api/apply/batch":
+                return self._json(HTTPStatus.OK, {"batch": start_n_batch(int(body.get("count") or 0))})
+            if path == "/api/apply/batch/stop":
+                if n_batch["job"]:
+                    n_batch["job"].stop()
+                return self._json(HTTPStatus.OK, {"batch": n_batch["job"].status() if n_batch["job"] else None})
 
             if path == "/api/apply/login":
                 if apply_queue.busy():
