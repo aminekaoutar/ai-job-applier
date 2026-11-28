@@ -87,19 +87,51 @@ def _call(prompt: str, schema: dict, timeout: int, model_name: str) -> dict:
             "modelUsage": {out.get("model", model_name): {}}}
 
 
+FALLBACK_MODELS = ["openai/gpt-oss-20b", "qwen/qwen3.8-27b"]
+_cooldown: dict[str, float] = {}  # model -> time its per-minute limit frees up
+
+
+def models() -> list[str]:
+    """The model to use first, then others with their OWN free-tier per-minute budget (GROQ_MODELS overrides)."""
+    env = [m.strip() for m in os.environ.get("GROQ_MODELS", "").split(",") if m.strip()]
+    return list(dict.fromkeys(env or [model(), *FALLBACK_MODELS]))
+
+
+def _wait_hint(exc: Exception) -> float:
+    m = re.search(r"try again in (?:(\d+)m)?(\d+(?:\.\d+)?)(m?s)", str(exc))
+    if not m:
+        return 15.0
+    secs = float(m.group(2)) / (1000 if m.group(3) == "ms" else 1)
+    return secs + 60 * float(m.group(1) or 0)
+
+
 def chat_json(prompt: str, schema: dict, timeout: int = 90, task: str = "groq") -> dict:
-    """One call; returns the JSON object the model produced. Retries once on unparsable JSON."""
+    """One call; returns the JSON object the model produced. A model at its per-minute limit (429) is
+    skipped for the next one instead of waiting; only when all are limited does it sleep. Retries once
+    on unparsable JSON."""
     for attempt in range(2):
-        for wait in range(5):  # free tier: 8k tokens a minute - a 429 says how long to wait
-            try:
-                raw = ls_tracing.trace_llm(task, _call, prompt, schema, timeout, model())
-                break
-            except GroqError as exc:
-                m = re.search(r"try again in (\d+(?:\.\d+)?)(m?s)", str(exc))
-                if "HTTP 429" not in str(exc) or wait == 4:
+        raw = None
+        for _round in range(4):
+            now = time.time()
+            for name in models():
+                if _cooldown.get(name, 0) > now:
+                    continue
+                try:
+                    raw = ls_tracing.trace_llm(task, _call, prompt, schema, timeout, name)
+                    break
+                except GroqError as exc:
+                    if "HTTP 429" in str(exc):
+                        _cooldown[name] = time.time() + _wait_hint(exc)
+                        continue
+                    if "HTTP 413" in str(exc) or "model_not_found" in str(exc) or "HTTP 404" in str(exc):
+                        continue  # too large for this model's budget / not available: try the next one
                     raise
-                secs = float(m.group(1)) / (1000 if m and m.group(2) == "ms" else 1) if m else 15.0
-                time.sleep(min(secs + 1, 60))
+            if raw is not None:
+                break
+            soonest = min((_cooldown.get(n, 0) for n in models()), default=time.time() + 5)
+            time.sleep(min(max(soonest - time.time(), 1) + 0.5, 30))
+        if raw is None:
+            raise GroqError("all Groq models are rate-limited or refused the request")
         text = raw.get("result", "")
         m = re.search(r"\{.*\}", text, re.S)
         if m:

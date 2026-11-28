@@ -123,6 +123,22 @@ class LanguageCV(unittest.TestCase):
             self.assertIn("English", note)
 
 
+class ContractFilter(unittest.TestCase):
+    WANT = "CDI (permanent contract) only - not internships (stage), alternance/apprenticeship or freelance"
+
+    def test_cdi_only_skips_stage_alternance_freelance(self):
+        self.assertEqual(aa.unwanted_contract("Stage - Data Engineering", "", self.WANT), "stage")
+        self.assertEqual(aa.unwanted_contract("Data Scientist Intern - 2027", "", self.WANT), "stage")
+        self.assertEqual(aa.unwanted_contract("Apprenti Data Scientist H/F", "", self.WANT), "alternance")
+        self.assertEqual(aa.unwanted_contract("AI Engineer", "Type de contrat : Freelance - TJM 500€", self.WANT), "freelance")
+
+    def test_cdi_offers_are_kept(self):
+        self.assertIsNone(aa.unwanted_contract("Développeur Python H/F", "Type de contrat : CDI. Paris.", self.WANT))
+        # A CDI posting that mentions interns elsewhere is still a CDI.
+        self.assertIsNone(aa.unwanted_contract("AI Engineer", "CDI - you will mentor our stagiaires", self.WANT))
+        self.assertIsNone(aa.unwanted_contract("Stage IA", "", ""))  # no preference: nothing skipped
+
+
 class AnswerContext(unittest.TestCase):
     def test_prompt_carries_language_posting_github_and_residence_facts(self):
         seen = {}

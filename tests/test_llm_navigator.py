@@ -172,6 +172,37 @@ class GroqCalls(unittest.TestCase):
                 groq_llm._call("p", {}, 5, "m")
 
 
+class Speed(unittest.TestCase):
+    def test_rate_limited_model_hands_over_without_waiting(self):
+        import groq_llm
+        groq_llm._cooldown.clear()
+        calls = []
+
+        def fake_call(prompt, schema, timeout, name):
+            calls.append(name)
+            if name == "openai/gpt-oss-120b":
+                raise groq_llm.GroqError("Groq HTTP 429: Rate limit reached ... Please try again in 37.5s")
+            return {"result": '{"action": "wait", "reason": "r"}'}
+
+        with mock.patch.dict(groq_llm.os.environ, {"GROQ_MODELS": "", "GROQ_MODEL": ""}), \
+                mock.patch.object(groq_llm, "_call", side_effect=fake_call), \
+                mock.patch.object(groq_llm.time, "sleep") as sleep:
+            self.assertEqual(groq_llm.chat_json("p", nav.STEP_SCHEMA)["action"], "wait")
+            self.assertEqual(groq_llm.chat_json("p", nav.STEP_SCHEMA)["action"], "wait")
+        sleep.assert_not_called()
+        self.assertEqual(calls, ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "openai/gpt-oss-20b"])  # 120b cooling down
+        groq_llm._cooldown.clear()
+
+    def test_deadline_stops_the_loop_without_asking(self):
+        page = mock.MagicMock()
+        with mock.patch.object(nav, "ask_step") as ask:
+            status, _, reason = nav.navigate(page, "g", JOB, PROFILE, {}, None, "French", log=lambda *_: None,
+                                             deadline=nav.time.time() - 1)
+        ask.assert_not_called()
+        self.assertEqual(status, "out_of_steps")
+        self.assertIn("10 min", reason)
+
+
 class SitePassword(unittest.TestCase):
     def test_site_key(self):
         self.assertEqual(nav.site_key("https://careers.acme.co.uk/apply"), "acme.co.uk")

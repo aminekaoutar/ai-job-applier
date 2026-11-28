@@ -485,7 +485,7 @@ SHOT_NAME = re.compile(r"^[A-Za-z0-9._-]{1,200}\.png$")
 # "sent" only when the site showed its confirmation page: an unconfirmed click is never counted as sent.
 APPLIED_GROUP = {"submitted": "sent", "submitted_unconfirmed": "unconfirmed", "filled": "needs_you", "needs_you": "needs_you",
                  "login_needed": "needs_you", "blocked": "blocked", "no_form": "blocked", "easy_apply": "skipped",
-                 "skipped_linkedin": "skipped", "sms_code": "skipped", "expired": "closed", "error": "needs_you", "cancelled": "skipped"}
+                 "skipped_linkedin": "skipped", "sms_code": "skipped", "not_wanted": "skipped", "expired": "closed", "error": "needs_you", "cancelled": "skipped"}
 
 
 def applied_rows(profile_dir: Path) -> list[dict]:

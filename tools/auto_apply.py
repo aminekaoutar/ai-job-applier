@@ -303,6 +303,25 @@ def cv_for(job: dict, profile_dir: Path, override: str | None) -> Path | None:
 
 # --- context: posting language, GitHub projects, a CV in the posting's language ------
 
+NOT_CDI = {
+    "stage": re.compile(r"\b(stage|stagiaire|intern(ship)?|stage de fin d.études|pfe)\b", re.I),
+    "alternance": re.compile(r"\b(alternance|alternant|apprenti(ssage)?|work.?study|contrat pro)\b", re.I),
+    "freelance": re.compile(r"\b(freelance|free-lance|portage salarial|indépendant|tjm)\b", re.I),
+}
+
+
+def unwanted_contract(title: str, posting: str, wanted: str) -> str | None:
+    """The contract type to skip when the candidate wants CDI only ('stage', 'alternance', 'freelance'),
+    judged from the title and the posting's first lines (where 'Type de contrat' sits)."""
+    if not re.search(r"\bcdi\b", wanted or "", re.I) or not re.search(r"\bonly\b|uniquement|seulement", wanted, re.I):
+        return None
+    head = f"{title}\n{(posting or '')[:700]}"
+    for kind, rx in NOT_CDI.items():
+        if rx.search(title or "") or (rx.search(head) and not re.search(r"\bcdi\b", head, re.I)):
+            return kind
+    return None
+
+
 def posting_language(posting: str) -> str:
     """'French' or 'English' - the language the whole application is written in."""
     return ps.detect_language(posting) if posting.strip() else "French"
@@ -541,6 +560,7 @@ ANSWER_KEYS = {
     "permit_valid_until": "Residence permit valid until (YYYY-MM-DD)",
     "work_authorization": "Right to work, e.g. 'Authorised to work in France (carte de séjour); needs a permit for CH and LU'",
     "needs_sponsorship": "Needs visa sponsorship / a new work authorisation from the employer? 'yes' / 'no'",
+    "contract_wanted": "Contracts you want, e.g. 'CDI only' - other offers (stage, alternance, freelance) are skipped",
     "relocation": "Willing to relocate? e.g. 'yes - Paris, Luxembourg, Geneva'",
     "remote_preference": "Remote preference, e.g. 'hybrid'",
     "driving_licence": "Driving licence? 'yes' / 'no'",
@@ -1311,6 +1331,7 @@ def main(argv=None) -> int:
     interactive = sys.stdin.isatty()
 
     started = time.time()
+    deadline = started + 570  # every offer is done (sent or given up) in under 10 minutes
     reached_form = {"yes": False}  # set once a form was filled: only then can an email confirm a submission
 
     def site_of(url: str) -> str:
@@ -1347,7 +1368,7 @@ def main(argv=None) -> int:
                     extra["page_says"] = re.sub(r"\s+", " ", page_text(page))[:400]
                 except Exception:  # noqa: BLE001
                     pass
-            out = {"status": status, **base, **extra}
+            out = {"status": status, **base, **extra, "secs": round(time.time() - started)}
             print("RESULT " + json.dumps(out, ensure_ascii=False))
             log(args.profile_dir, {"date": str(date.today()), **out})
             if not (close or args.headless):
@@ -1373,6 +1394,9 @@ def main(argv=None) -> int:
         # The posting is read on the offer page itself (a LinkedIn offer is left right after).
         posting = str(job.get("posting") or "").strip() or page_text(page)[:12000]
         language = posting_language(posting)
+        title = job.get("title") or (page.title() or "")
+        if (kind := unwanted_contract(title, posting, str(standing.get("contract_wanted") or ""))):
+            return finish("not_wanted", True, why=f"{kind} offer - you are looking for a CDI only; not applied")
 
         page, state = follow_apply(page, ctx)
         if state == "easy_apply":
@@ -1417,7 +1441,7 @@ def main(argv=None) -> int:
                 is_done=lambda p: bool(DONE_TEXT.search(page_text(p)[:30000])), is_blocked=blocked,
                 reached=(lambda p: has_form(p) and bool(collect(p))) if reach_form else None,
                 mailbox_code=lambda p, since: mailbox_code(p, since, args.profile_dir / "mailbox.json"),
-                fill_phone=fill_phone)
+                fill_phone=fill_phone, deadline=deadline)
 
         GOAL_FORM = ("Get to this job's application form: accept or close cookie banners, click Apply / Postuler / "
                      "'Postuler sur le site', choose to apply with a CV, create the account or log in if required.")

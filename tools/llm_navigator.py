@@ -258,6 +258,15 @@ def _locate(page, target: str):
     return frame, frame.locator(f'[data-aa-act="{aid}"]').first
 
 
+def _quick_settle(page) -> None:
+    """Enough for the page to react to an action: its load event (if it navigated) plus a short pause."""
+    try:
+        page.wait_for_load_state("domcontentloaded", timeout=8000)
+    except Exception:  # noqa: BLE001
+        pass
+    page.wait_for_timeout(800)
+
+
 def act(page, step: dict, cv: Path | None, mailbox_code=None, fill_phone=None):
     """Do one action. Returns (page, note): page may be a new tab the action opened."""
     action, target, value = step.get("action"), step.get("target") or "", step.get("value") or ""
@@ -268,7 +277,7 @@ def act(page, step: dict, cv: Path | None, mailbox_code=None, fill_phone=None):
         return page, "waited"
     if action == "press_enter":
         page.keyboard.press("Enter")
-        page.wait_for_timeout(2500)
+        _quick_settle(page)
         return page, "pressed Enter"
     frame, el = _locate(page, target)
     if el is None or not el.count():
@@ -307,7 +316,7 @@ def act(page, step: dict, cv: Path | None, mailbox_code=None, fill_phone=None):
         if mailbox_code is None or not mailbox_code(page, time.time() - 900):
             return page, "no code in the job mailbox"
         return page, "typed the emailed code"
-    page.wait_for_timeout(2500)
+    _quick_settle(page)
     if len(ctx.pages) > before:
         page = ctx.pages[-1]
         try:
@@ -347,7 +356,7 @@ def ask_step(prompt: str, log=print) -> dict:
 
 def navigate(page, goal: str, job: dict, profile: dict, standing: dict, cv: Path | None, language: str,
              max_steps: int = 15, is_done=None, is_blocked=None, reached=None, mailbox_code=None,
-             fill_phone=None, log=print):
+             fill_phone=None, log=print, deadline: float | None = None):
     """Ask Claude for one action at a time until `reached(page)` / the site confirms / Claude gives up.
     Returns (status, page, reason): status in reached | submitted | give_up | blocked | out_of_steps."""
     basics = profile.get("basics", {})
@@ -359,6 +368,8 @@ def navigate(page, goal: str, job: dict, profile: dict, standing: dict, cv: Path
     phone = basics.get("phone", "")
     history: list[str] = []
     for n in range(1, max_steps + 1):
+        if deadline and time.time() > deadline:
+            return "out_of_steps", page, "time budget for this offer used up (10 min)"
         if is_done and is_done(page):
             return "submitted", page, "the site confirmed the application"
         if is_blocked and (why := is_blocked(page)):
