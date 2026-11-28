@@ -132,6 +132,14 @@ class ContractFilter(unittest.TestCase):
         self.assertEqual(aa.unwanted_contract("Apprenti Data Scientist H/F", "", self.WANT), "alternance")
         self.assertEqual(aa.unwanted_contract("AI Engineer", "Type de contrat : Freelance - TJM 500€", self.WANT), "freelance")
 
+    def test_cdi_or_freelance_keeps_freelance(self):
+        want = "CDI or freelance only - not internships (stage) or alternance/apprenticeship"
+        self.assertIsNone(aa.unwanted_contract("AI Engineer", "Type de contrat : Freelance - TJM 500€", want))
+        self.assertIsNone(aa.unwanted_contract("Consultant IA - Portage salarial", "", want))
+        self.assertEqual(aa.unwanted_contract("Stage - Data Engineering", "", want), "stage")
+        self.assertEqual(aa.unwanted_contract("Apprenti Data Scientist H/F", "", want), "alternance")
+        self.assertIsNone(aa.unwanted_contract("Développeur Python", "CDI", want))
+
     def test_cdi_offers_are_kept(self):
         self.assertIsNone(aa.unwanted_contract("Développeur Python H/F", "Type de contrat : CDI. Paris.", self.WANT))
         # A CDI posting that mentions interns elsewhere is still a CDI.

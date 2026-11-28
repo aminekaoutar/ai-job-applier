@@ -311,12 +311,22 @@ NOT_CDI = {
 
 
 def unwanted_contract(title: str, posting: str, wanted: str) -> str | None:
-    """The contract type to skip when the candidate wants CDI only ('stage', 'alternance', 'freelance'),
-    judged from the title and the posting's first lines (where 'Type de contrat' sits)."""
-    if not re.search(r"\bcdi\b", wanted or "", re.I) or not re.search(r"\bonly\b|uniquement|seulement", wanted, re.I):
+    """The contract type to skip ('stage', 'alternance', 'freelance'), from the candidate's own words, e.g.
+    'CDI or freelance only - not internships or alternance': a type named before the 'not' is wanted;
+    one named after it, or any type not named when the text says 'only', is skipped. Judged from the
+    title and the posting's first lines (where 'Type de contrat' sits)."""
+    wanted = wanted or ""
+    if not re.search(r"\bcdi\b", wanted, re.I):
         return None
+    pos, *rest = re.split(r"\b(?:not|no|pas de|pas d'|sauf|except)\b", wanted, maxsplit=1, flags=re.I)
+    neg = rest[0] if rest else ""
+    only = bool(re.search(r"\bonly\b|uniquement|seulement", wanted, re.I))
     head = f"{title}\n{(posting or '')[:700]}"
     for kind, rx in NOT_CDI.items():
+        if rx.search(pos):
+            continue  # asked for
+        if not (only or rx.search(neg)):
+            continue
         if rx.search(title or "") or (rx.search(head) and not re.search(r"\bcdi\b", head, re.I)):
             return kind
     return None
